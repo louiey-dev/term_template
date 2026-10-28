@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
+import 'common/cm_cmd_history.dart';
 import 'common/cm_general_settings.dart';
 import 'models/panel_entry.dart';
 
 /// Registry mapping unique panel IDs to widget factory functions.
 final Map<String, Widget Function()> panelRegistry = {
+  'cm_cmd_history': () => const CmCmdHistoryPanel(),
   'cm_general': () => const CmGeneralSettingsPanel(),
 };
 
@@ -14,6 +16,12 @@ final List<PanelGroup> panelGroups = [
     title: 'COMMON',
     icon: Icons.layers,
     items: [
+      PanelEntry(
+        id: 'cm_cmd_history',
+        label: 'Cmd History',
+        description: 'Recent & favorite commands',
+        icon: Icons.history,
+      ),
       PanelEntry(
         id: 'cm_general',
         label: 'General Settings',
