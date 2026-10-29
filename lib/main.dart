@@ -9,7 +9,6 @@ import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'core/router/app_router.dart';
-import 'core/theme/app_theme.dart';
 import 'core/theme/theme_provider.dart';
 
 void main() async {
@@ -99,9 +98,7 @@ class TermTemplateApp extends ConsumerWidget {
     return MaterialApp.router(
       debugShowCheckedModeBanner: false,
       title: appTitle,
-      theme: AppTheme.lightTheme,
-      darkTheme: AppTheme.darkTheme,
-      themeMode: themeMode,
+      theme: themeMode.themeData,
       routerConfig: router,
     );
   }

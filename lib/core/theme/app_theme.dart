@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:xterm/xterm.dart';
 
-/// Semantic application color palette with dark and light variants.
+/// Semantic application color palette with light, dark, dark blue, and green variants.
 class AppColors extends ThemeExtension<AppColors> {
   const AppColors({
     required this.background,
@@ -33,7 +33,7 @@ class AppColors extends ThemeExtension<AppColors> {
   final Color success;
   final Color chartBlue;
 
-  static const dark = AppColors(
+  static const darkBlue = AppColors(
     background: Color(0xFF1A1A2E),
     card: Color(0xFF222240),
     sidebar: Color(0xFF16162A),
@@ -46,6 +46,38 @@ class AppColors extends ThemeExtension<AppColors> {
     warning: Color(0xFFE8B84A),
     destructive: Color(0xFFE85454),
     success: Color(0xFF2DD4A8),
+    chartBlue: Color(0xFF4A8AE8),
+  );
+
+  static const dark = AppColors(
+    background: Color(0xFF121214),
+    card: Color(0xFF18181B),
+    sidebar: Color(0xFF0E0E10),
+    surface: Color(0xFF222226),
+    border: Color(0xFF2E2E34),
+    primary: Color(0xFF2DD4A8),
+    primaryForeground: Color(0xFF121214),
+    foreground: Color(0xFFE4E4E7),
+    muted: Color(0xFF8E8E98),
+    warning: Color(0xFFE8B84A),
+    destructive: Color(0xFFE85454),
+    success: Color(0xFF2DD4A8),
+    chartBlue: Color(0xFF4A8AE8),
+  );
+
+  static const green = AppColors(
+    background: Color(0xFF0F2017),
+    card: Color(0xFF152A1F),
+    sidebar: Color(0xFF0B1811),
+    surface: Color(0xFF1C3528),
+    border: Color(0xFF284A38),
+    primary: Color(0xFF4ADE80),
+    primaryForeground: Color(0xFF0F2017),
+    foreground: Color(0xFFE2F2E8),
+    muted: Color(0xFF7CA08A),
+    warning: Color(0xFFE8B84A),
+    destructive: Color(0xFFE85454),
+    success: Color(0xFF4ADE80),
     chartBlue: Color(0xFF4A8AE8),
   );
 
@@ -126,13 +158,16 @@ class AppColors extends ThemeExtension<AppColors> {
 /// Convenience extension on [BuildContext] to access [AppColors].
 extension AppColorsContext on BuildContext {
   AppColors get colors =>
-      Theme.of(this).extension<AppColors>() ?? AppColors.dark;
+      Theme.of(this).extension<AppColors>() ?? AppColors.darkBlue;
 }
 
 /// Main application theme definitions.
 class AppTheme {
-  static ThemeData get darkTheme => _build(AppColors.dark, Brightness.dark);
   static ThemeData get lightTheme => _build(AppColors.light, Brightness.light);
+  static ThemeData get darkTheme => _build(AppColors.dark, Brightness.dark);
+  static ThemeData get darkBlueTheme =>
+      _build(AppColors.darkBlue, Brightness.dark);
+  static ThemeData get greenTheme => _build(AppColors.green, Brightness.dark);
 
   static ThemeData _build(AppColors c, Brightness brightness) {
     return ThemeData(

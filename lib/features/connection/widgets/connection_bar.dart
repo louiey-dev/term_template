@@ -35,7 +35,6 @@ class ConnectionBar extends ConsumerWidget {
     final ports = ref.watch(availablePortsNotifierProvider);
     final isScanning = ref.watch(serialScanLoadingProvider);
     final themeMode = ref.watch(themeModeProvider);
-    final isDark = themeMode == ThemeMode.dark;
 
     // Resolve the active SERIAL pane
     final activeId = ref.watch(effectiveActiveSerialTabIdProvider);
@@ -213,13 +212,10 @@ class ConnectionBar extends ConsumerWidget {
 
           // Theme toggle
           Tooltip(
-            message: isDark ? 'Switch to light mode' : 'Switch to dark mode',
+            message:
+                'Theme: ${themeMode.label} (switch to ${themeMode.next.label})',
             child: IconButton(
-              icon: Icon(
-                isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
-                size: 18,
-                color: c.muted,
-              ),
+              icon: Icon(themeMode.icon, size: 18, color: c.muted),
               onPressed: () => ref.read(themeModeProvider.notifier).toggle(),
             ),
           ),
