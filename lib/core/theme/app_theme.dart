@@ -65,6 +65,22 @@ class AppColors extends ThemeExtension<AppColors> {
     chartBlue: Color(0xFF4A8AE8),
   );
 
+  static const medium = AppColors(
+    background: Color(0xFF172A3A),
+    card: Color(0xFF1E3547),
+    sidebar: Color(0xFF122230),
+    surface: Color(0xFF264258),
+    border: Color(0xFF355973),
+    primary: Color(0xFF2DD4A8),
+    primaryForeground: Color(0xFF0E1D28),
+    foreground: Color(0xFFE4F2F7),
+    muted: Color.fromARGB(255, 183, 206, 219),
+    warning: Color(0xFFF0B429),
+    destructive: Color(0xFFF25F5C),
+    success: Color(0xFF34D399),
+    chartBlue: Color(0xFF38BDF8),
+  );
+
   static const green = AppColors(
     background: Color(0xFF0F2017),
     card: Color(0xFF152A1F),
