@@ -184,6 +184,7 @@ class AppTheme {
   static ThemeData get darkBlueTheme =>
       _build(AppColors.darkBlue, Brightness.dark);
   static ThemeData get greenTheme => _build(AppColors.green, Brightness.dark);
+  static ThemeData get mediumTheme => _build(AppColors.medium, Brightness.dark);
 
   static ThemeData _build(AppColors c, Brightness brightness) {
     return ThemeData(

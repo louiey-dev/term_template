@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/app_info_provider.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/theme_provider.dart';
 import '../../../shared/my_widget.dart';
@@ -22,8 +23,6 @@ const _baudRates = [
 ];
 
 enum _AppMenuAction { comSettings, about }
-
-const _appVersion = '1.0.0';
 
 /// Top toolbar for serial port scanning, selection, connection control, and theme switching.
 class ConnectionBar extends ConsumerWidget {
@@ -210,12 +209,27 @@ class ConnectionBar extends ConsumerWidget {
 
           const SizedBox(width: 4),
 
-          // Theme toggle
+          // Theme toggle (cycles Dark -> Medium -> Dark Blue -> Green -> Light)
           Tooltip(
-            message:
-                'Theme: ${themeMode.label} (switch to ${themeMode.next.label})',
+            message: switch (themeMode) {
+              AppThemeMode.dark => 'Theme: Dark (click for Medium)',
+              AppThemeMode.medium => 'Theme: Medium (click for Dark Blue)',
+              AppThemeMode.darkBlue => 'Theme: Dark Blue (click for Green)',
+              AppThemeMode.green => 'Theme: Green (click for Light)',
+              AppThemeMode.light => 'Theme: Light (click for Dark)',
+            },
             child: IconButton(
-              icon: Icon(themeMode.icon, size: 18, color: c.muted),
+              icon: Icon(
+                switch (themeMode) {
+                  AppThemeMode.dark => Icons.dark_mode_outlined,
+                  AppThemeMode.medium => Icons.brightness_medium_outlined,
+                  AppThemeMode.darkBlue => Icons.nights_stay_outlined,
+                  AppThemeMode.green => Icons.eco_outlined,
+                  AppThemeMode.light => Icons.light_mode_outlined,
+                },
+                size: 18,
+                color: c.muted,
+              ),
               onPressed: () => ref.read(themeModeProvider.notifier).toggle(),
             ),
           ),
@@ -441,12 +455,15 @@ class _DialogCheckRow extends StatelessWidget {
   }
 }
 
-class _AboutDialog extends StatelessWidget {
+class _AboutDialog extends ConsumerWidget {
   const _AboutDialog();
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final c = context.colors;
+    final versionAsync = ref.watch(appVersionProvider);
+    final version = versionAsync.asData?.value;
+
     return AlertDialog(
       backgroundColor: c.card,
       shape: RoundedRectangleBorder(
@@ -458,7 +475,7 @@ class _AboutDialog extends StatelessWidget {
           Icon(Icons.terminal, size: 20, color: c.primary),
           const SizedBox(width: 8),
           Text(
-            'term_template',
+            kAppName,
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w600,
@@ -472,7 +489,9 @@ class _AboutDialog extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Version $_appVersion',
+            version != null && version.isNotEmpty
+                ? 'Version $version'
+                : 'Version ...',
             style: TextStyle(
               fontSize: 12,
               fontFamily: 'Consolas',

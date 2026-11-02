@@ -31,3 +31,5 @@
 ## Rules
 
 - Do not claim that checks you did not run were successful. In your final response, clearly distinguish the commands you actually ran from their results.
+- Whenever moving panel screens, current state should be maintain so after back to current panel screen, it should restore status before move
+- UI should avoid pixel overflow issue
