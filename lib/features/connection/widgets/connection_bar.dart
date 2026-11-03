@@ -72,7 +72,7 @@ class ConnectionBar extends ConsumerWidget {
                   Icon(Icons.terminal, size: 18, color: c.primary),
                   const SizedBox(width: 8),
                   Text(
-                    'term_template',
+                    kProjName,
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
