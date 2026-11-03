@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/app_info_provider.dart';
@@ -10,17 +11,7 @@ import '../models/serial_config.dart';
 import '../providers/serial_config_notifier.dart';
 import '../providers/serial_pane_provider.dart';
 
-const _baudRates = [
-  9600,
-  19200,
-  38400,
-  57600,
-  115200,
-  230400,
-  460800,
-  921600,
-  1500000,
-];
+const int _customBaudRateValue = -1;
 
 enum _AppMenuAction { comSettings, about }
 
@@ -40,12 +31,22 @@ class ConnectionBar extends ConsumerWidget {
     final hasPane = activeId != null;
     final pane = hasPane
         ? ref.watch(serialPaneNotifierProvider(activeId))
-        : const SerialPaneState();
+        : SerialPaneState(
+            config: SerialConfig(
+              baudRate: SerialPaneNotifier.getPersistedBaudRate(),
+            ),
+          );
     final paneN = hasPane
         ? ref.read(serialPaneNotifierProvider(activeId).notifier)
         : null;
     final config = pane.config;
     final isConnected = pane.isConnected;
+    final customBauds = ref.watch(customBaudRatesProvider);
+    final allBaudRates = {
+      ...standardBaudRates,
+      ...customBauds,
+      if (config.baudRate > 0) config.baudRate,
+    }.toList()..sort();
 
     return Container(
       height: 48,
@@ -125,26 +126,59 @@ class ConnectionBar extends ConsumerWidget {
                   buildDropdown<int>(
                     context,
                     value: config.baudRate,
-                    items: _baudRates
-                        .map(
-                          (b) => DropdownMenuItem(
-                            value: b,
-                            child: Text(
-                              '$b',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontFamily: 'Consolas',
-                              ),
+                    items: [
+                      ...allBaudRates.map(
+                        (b) => DropdownMenuItem(
+                          value: b,
+                          child: Text(
+                            '$b',
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontFamily: 'Consolas',
                             ),
                           ),
-                        )
-                        .toList(),
+                        ),
+                      ),
+                      DropdownMenuItem<int>(
+                        value: _customBaudRateValue,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.add, size: 12, color: c.primary),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                'Custom...',
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: c.primary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                     onChanged: (!hasPane || isConnected)
                         ? null
                         : (v) {
-                            if (v != null) paneN!.setBaudRate(v);
+                            if (v == _customBaudRateValue) {
+                              _showCustomBaudRateDialog(
+                                context,
+                                ref,
+                                paneN!,
+                                config.baudRate,
+                              );
+                            } else if (v != null) {
+                              paneN!.setBaudRate(v);
+                            }
                           },
-                    width: 100,
+                    width: 120,
                   ),
 
                   const ToolbarDivider(),
@@ -209,27 +243,18 @@ class ConnectionBar extends ConsumerWidget {
 
           const SizedBox(width: 4),
 
-          // Theme toggle (cycles Dark -> Medium -> Dark Blue -> Green -> Light)
+          // Theme toggle (cycles Dark -> Dark Blue -> Medium -> Green -> Pink -> Light)
           Tooltip(
             message: switch (themeMode) {
-              AppThemeMode.dark => 'Theme: Dark (click for Medium)',
-              AppThemeMode.medium => 'Theme: Medium (click for Dark Blue)',
-              AppThemeMode.darkBlue => 'Theme: Dark Blue (click for Green)',
-              AppThemeMode.green => 'Theme: Green (click for Light)',
+              AppThemeMode.dark => 'Theme: Dark (click for Dark Blue)',
+              AppThemeMode.darkBlue => 'Theme: Dark Blue (click for Medium)',
+              AppThemeMode.medium => 'Theme: Medium (click for Green)',
+              AppThemeMode.green => 'Theme: Green (click for Pink)',
+              AppThemeMode.pink => 'Theme: Pink (click for Light)',
               AppThemeMode.light => 'Theme: Light (click for Dark)',
             },
             child: IconButton(
-              icon: Icon(
-                switch (themeMode) {
-                  AppThemeMode.dark => Icons.dark_mode_outlined,
-                  AppThemeMode.medium => Icons.brightness_medium_outlined,
-                  AppThemeMode.darkBlue => Icons.nights_stay_outlined,
-                  AppThemeMode.green => Icons.eco_outlined,
-                  AppThemeMode.light => Icons.light_mode_outlined,
-                },
-                size: 18,
-                color: c.muted,
-              ),
+              icon: Icon(themeMode.icon, size: 18, color: c.muted),
               onPressed: () => ref.read(themeModeProvider.notifier).toggle(),
             ),
           ),
@@ -594,6 +619,312 @@ class _StatusPill extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+Future<void> _showCustomBaudRateDialog(
+  BuildContext context,
+  WidgetRef ref,
+  SerialPaneNotifier paneN,
+  int currentBaud,
+) async {
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => Consumer(
+      builder: (context, refConsumer, _) {
+        final customBauds = refConsumer.watch(customBaudRatesProvider);
+        return _CustomBaudRateDialog(
+          initialBaud: currentBaud,
+          customBauds: customBauds,
+          onDeleteCustom: (baud) {
+            refConsumer.read(customBaudRatesProvider.notifier).remove(baud);
+            if (currentBaud == baud) {
+              paneN.setBaudRate(SerialPaneNotifier.defaultBaudRate);
+            }
+          },
+          onConfirm: (baud) {
+            refConsumer.read(customBaudRatesProvider.notifier).add(baud);
+            paneN.setBaudRate(baud);
+          },
+        );
+      },
+    ),
+  );
+}
+
+class _CustomBaudRateDialog extends StatefulWidget {
+  const _CustomBaudRateDialog({
+    required this.initialBaud,
+    required this.onConfirm,
+    this.customBauds = const [],
+    this.onDeleteCustom,
+  });
+
+  final int initialBaud;
+  final ValueChanged<int> onConfirm;
+  final List<int> customBauds;
+  final ValueChanged<int>? onDeleteCustom;
+
+  @override
+  State<_CustomBaudRateDialog> createState() => _CustomBaudRateDialogState();
+}
+
+class _CustomBaudRateDialogState extends State<_CustomBaudRateDialog> {
+  static const _commonPresets = [
+    74880,
+    250000,
+    500000,
+    1000000,
+    2000000,
+    3000000,
+  ];
+
+  late final TextEditingController _controller;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(
+      text: widget.initialBaud > 0 ? '${widget.initialBaud}' : '115200',
+    );
+    _controller.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: _controller.text.length,
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final text = _controller.text.trim();
+    final value = int.tryParse(text);
+    if (value == null || value <= 0) {
+      setState(() => _error = 'Enter a valid positive number');
+      return;
+    }
+    if (value > 10000000) {
+      setState(() => _error = 'Maximum baud rate is 10,000,000');
+      return;
+    }
+    widget.onConfirm(value);
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+
+    return AlertDialog(
+      backgroundColor: c.card,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: c.border),
+      ),
+      title: Row(
+        children: [
+          Icon(Icons.speed, size: 18, color: c.primary),
+          const SizedBox(width: 8),
+          Text(
+            'Custom Baud Rate',
+            style: TextStyle(fontSize: 15, color: c.foreground),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 320,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Enter custom baud rate (bps):',
+                style: TextStyle(fontSize: 12, color: c.muted),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _controller,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                style: TextStyle(
+                  fontSize: 13,
+                  color: c.foreground,
+                  fontFamily: 'Consolas',
+                ),
+                decoration: InputDecoration(
+                  isDense: true,
+                  hintText: 'e.g. 2000000',
+                  errorText: _error,
+                  filled: true,
+                  fillColor: c.surface,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 10,
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: BorderSide(color: c.border),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: BorderSide(color: c.border),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(6),
+                    borderSide: BorderSide(color: c.primary),
+                  ),
+                ),
+                onSubmitted: (_) => _submit(),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'COMMON PRESETS',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
+                  color: c.muted,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: _commonPresets.map((p) {
+                  return InkWell(
+                    onTap: () {
+                      setState(() {
+                        _controller.text = '$p';
+                        _controller.selection = TextSelection(
+                          baseOffset: 0,
+                          extentOffset: _controller.text.length,
+                        );
+                        _error = null;
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(4),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: c.surface,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: c.border),
+                      ),
+                      child: Text(
+                        '$p',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontFamily: 'Consolas',
+                          color: c.foreground,
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+              if (widget.customBauds.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'SAVED CUSTOM RATES',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.2,
+                    color: c.muted,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: widget.customBauds.map((b) {
+                    return Container(
+                      padding: const EdgeInsets.only(
+                        left: 8,
+                        right: 4,
+                        top: 2,
+                        bottom: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: c.surface,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: c.border),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          InkWell(
+                            onTap: () {
+                              setState(() {
+                                _controller.text = '$b';
+                                _controller.selection = TextSelection(
+                                  baseOffset: 0,
+                                  extentOffset: _controller.text.length,
+                                );
+                                _error = null;
+                              });
+                            },
+                            child: Text(
+                              '$b',
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontFamily: 'Consolas',
+                                color: c.foreground,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          InkWell(
+                            onTap: () => widget.onDeleteCustom?.call(b),
+                            borderRadius: BorderRadius.circular(4),
+                            child: Padding(
+                              padding: const EdgeInsets.all(2),
+                              child: Icon(
+                                Icons.close,
+                                size: 12,
+                                color: c.muted,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text('Cancel', style: TextStyle(color: c.muted)),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: c.primary,
+            foregroundColor: c.primaryForeground,
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            textStyle: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          onPressed: _submit,
+          child: const Text('Apply'),
+        ),
+      ],
     );
   }
 }

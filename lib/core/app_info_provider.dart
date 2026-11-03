@@ -4,6 +4,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 /// Central application display name used across window titles, UI headers, and dialogs.
 const kAppName = 'Term Template';
 
+const kProjName = 'term_template';
+
 /// Provides application name.
 final appNameProvider = Provider<String>((ref) => kAppName);
 

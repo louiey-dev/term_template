@@ -97,6 +97,22 @@ class AppColors extends ThemeExtension<AppColors> {
     chartBlue: Color(0xFF4A8AE8),
   );
 
+  static const pink = AppColors(
+    background: Color(0xFF20121D),
+    card: Color(0xFF281724),
+    sidebar: Color(0xFF1A0C17),
+    surface: Color(0xFF351F30),
+    border: Color(0xFF4D2C45),
+    primary: Color(0xFFF472B6),
+    primaryForeground: Color(0xFF20121D),
+    foreground: Color(0xFFFCE7F3),
+    muted: Color(0xFFA87D98),
+    warning: Color(0xFFFBBF24),
+    destructive: Color(0xFFF43F5E),
+    success: Color(0xFF34D399),
+    chartBlue: Color(0xFFC084FC),
+  );
+
   static const light = AppColors(
     background: Color(0xFFF0F0F8),
     card: Color(0xFFE8E8F4),
@@ -185,6 +201,7 @@ class AppTheme {
       _build(AppColors.darkBlue, Brightness.dark);
   static ThemeData get greenTheme => _build(AppColors.green, Brightness.dark);
   static ThemeData get mediumTheme => _build(AppColors.medium, Brightness.dark);
+  static ThemeData get pinkTheme => _build(AppColors.pink, Brightness.dark);
 
   static ThemeData _build(AppColors c, Brightness brightness) {
     return ThemeData(

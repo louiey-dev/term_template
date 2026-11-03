@@ -36,3 +36,22 @@ This template support UART/TERMINAL features via riverpod with custom widgets
 
 2. Send Board Commands
    - Use `sendBoardCommand(ref, context, 'my_cmd\r')` to send commands over the active serial or PTY connection without managing low-level streams.
+
+3. Config application settings at `app_info_provider.dart`
+   - define app name and project name
+
+      ```dart
+      /// Central application display name used across window titles, UI headers, and dialogs.
+      const kAppName = 'Term Template';
+
+      /// used for Hive appdata config store
+      const kProjName = 'term_template';
+      ```
+
+## History
+
+- 2026.11.03
+  - add `app_info_provider.dart`
+  - hive store current baudrate and restore when re-open app
+  - add custom baudrate input feature
+  - add pink theme

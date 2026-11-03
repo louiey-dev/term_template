@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:xterm/xterm.dart';
 
 import '../../../services/file_logger_service.dart';
@@ -11,6 +12,80 @@ import '../../terminal/models/terminal_tab.dart';
 import '../../terminal/providers/terminal_instances.dart';
 import '../models/serial_config.dart';
 import 'board_console.dart';
+
+/// Standard commonly used baud rates for serial communication.
+const standardBaudRates = [
+  9600,
+  19200,
+  38400,
+  57600,
+  115200,
+  230400,
+  460800,
+  921600,
+  1500000,
+];
+
+/// Global provider for saved custom baud rates list.
+final customBaudRatesProvider =
+    NotifierProvider<CustomBaudRatesNotifier, List<int>>(
+      CustomBaudRatesNotifier.new,
+    );
+
+/// Manages and persists user-defined custom baud rates in Hive.
+class CustomBaudRatesNotifier extends Notifier<List<int>> {
+  static const _boxName = 'app_settings';
+  static const _key = 'custom_baud_rates';
+
+  @override
+  List<int> build() {
+    final list = <int>{};
+    if (Hive.isBoxOpen(_boxName)) {
+      final box = Hive.box<String>(_boxName);
+      final raw = box.get(_key);
+      if (raw != null && raw.isNotEmpty) {
+        try {
+          final List<dynamic> decoded = jsonDecode(raw) as List<dynamic>;
+          for (final item in decoded) {
+            final parsed = int.tryParse(item.toString());
+            if (parsed != null &&
+                parsed > 0 &&
+                !standardBaudRates.contains(parsed)) {
+              list.add(parsed);
+            }
+          }
+        } catch (_) {}
+      }
+      final savedBaud = SerialPaneNotifier.getPersistedBaudRate();
+      if (!standardBaudRates.contains(savedBaud)) {
+        list.add(savedBaud);
+      }
+    }
+    return list.toList()..sort();
+  }
+
+  /// Adds a custom baud rate to storage and state.
+  void add(int baud) {
+    if (standardBaudRates.contains(baud) || state.contains(baud)) return;
+    final updated = [...state, baud]..sort();
+    state = updated;
+    _save(updated);
+  }
+
+  /// Removes a custom baud rate from storage and state.
+  void remove(int baud) {
+    if (!state.contains(baud)) return;
+    final updated = state.where((b) => b != baud).toList();
+    state = updated;
+    _save(updated);
+  }
+
+  void _save(List<int> list) {
+    if (Hive.isBoxOpen(_boxName)) {
+      Hive.box<String>(_boxName).put(_key, jsonEncode(list));
+    }
+  }
+}
 
 /// Current connection lifecycle state of a serial port.
 enum SerialStatus { disconnected, connecting, connected }
@@ -72,6 +147,10 @@ final effectiveActiveSerialTabIdProvider = Provider<String?>((ref) {
 
 /// Per-pane serial connection manager.
 class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
+  static const _boxName = 'app_settings';
+  static const _baudRateKey = 'serial_baud_rate';
+  static const int defaultBaudRate = 115200;
+
   SerialPort? _port;
   SerialPortReader? _reader;
   StreamSubscription<Uint8List>? _sub;
@@ -79,10 +158,26 @@ class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
 
   bool get isConnected => state.isConnected;
 
+  /// Retrieves the saved baud rate from Hive, falling back to [defaultBaudRate].
+  static int getPersistedBaudRate() {
+    if (Hive.isBoxOpen(_boxName)) {
+      final box = Hive.box<String>(_boxName);
+      final raw = box.get(_baudRateKey);
+      if (raw != null) {
+        final parsed = int.tryParse(raw);
+        if (parsed != null && parsed > 0) return parsed;
+      }
+    }
+    return defaultBaudRate;
+  }
+
   @override
   SerialPaneState build(String arg) {
     ref.onDispose(_cleanup);
-    return const SerialPaneState();
+    final baud = getPersistedBaudRate();
+    return SerialPaneState(
+      config: SerialConfig(baudRate: baud),
+    );
   }
 
   /// Writes raw string data to the open serial port.
@@ -112,8 +207,16 @@ class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
   void setPort(String port) =>
       state = state.copyWith(config: state.config.copyWith(port: port));
 
-  void setBaudRate(int baud) =>
-      state = state.copyWith(config: state.config.copyWith(baudRate: baud));
+  void setBaudRate(int baud) {
+    state = state.copyWith(config: state.config.copyWith(baudRate: baud));
+    _saveBaudRate(baud);
+  }
+
+  static void _saveBaudRate(int baud) {
+    if (Hive.isBoxOpen(_boxName)) {
+      Hive.box<String>(_boxName).put(_baudRateKey, baud.toString());
+    }
+  }
 
   void setEncoding(SerialEncoding enc) =>
       state = state.copyWith(config: state.config.copyWith(encoding: enc));

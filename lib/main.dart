@@ -8,6 +8,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'core/app_info_provider.dart';
 import 'core/router/app_router.dart';
 import 'core/theme/theme_provider.dart';
 
@@ -16,8 +17,8 @@ void main() async {
   await _initHive();
   final version = await loadVersion();
   final appTitle = version.isNotEmpty
-      ? 'term_template v$version — $_osLabel'
-      : 'term_template — $_osLabel';
+      ? '$kAppName v$version — $_osLabel'
+      : '$kAppName — $_osLabel';
   await _initWindow(appTitle);
   runApp(ProviderScope(child: TermTemplateApp(appTitle: appTitle)));
 }
@@ -27,7 +28,7 @@ Future<void> _initHive() async {
   if (!kIsWeb && Platform.isWindows) {
     final appData =
         Platform.environment['APPDATA'] ?? Directory.systemTemp.path;
-    hivePath = '$appData\\term_template';
+    hivePath = '$appData\\$kProjName';
   } else if (!kIsWeb) {
     hivePath = (await getApplicationDocumentsDirectory()).path;
   } else {
@@ -86,7 +87,7 @@ Future<String> loadVersion() async {
 
 /// Root widget for the term_template application.
 class TermTemplateApp extends ConsumerWidget {
-  const TermTemplateApp({super.key, this.appTitle = 'term_template'});
+  const TermTemplateApp({super.key, this.appTitle = kAppName});
 
   final String appTitle;
 
