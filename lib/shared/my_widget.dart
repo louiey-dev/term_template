@@ -14,27 +14,37 @@ Widget buildDropdown<T>(
   final matchingCount = items.where((item) => item.value == value).length;
   final safeValue = matchingCount == 1 ? value : null;
 
-  return Container(
-    height: 32,
-    width: width,
-    padding: const EdgeInsets.symmetric(horizontal: 8),
-    decoration: BoxDecoration(
-      color: c.surface,
-      borderRadius: BorderRadius.circular(6),
-      border: Border.all(color: c.border),
-    ),
-    child: DropdownButtonHideUnderline(
-      child: DropdownButton<T>(
-        value: safeValue,
-        hint: hint != null
-            ? Text(hint, style: TextStyle(fontSize: 12, color: c.muted))
-            : null,
-        isExpanded: true,
-        dropdownColor: c.card,
-        style: TextStyle(fontSize: 12, color: c.foreground),
-        icon: Icon(Icons.expand_more, size: 16, color: c.muted),
-        items: items,
-        onChanged: onChanged,
+  return LayoutBuilder(
+    builder: (context, constraints) => Container(
+      constraints: const BoxConstraints(minHeight: 32),
+      width: constraints.hasBoundedWidth
+          ? width.clamp(0.0, constraints.maxWidth)
+          : width,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: c.surface,
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: c.border),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<T>(
+          value: safeValue,
+          hint: hint != null
+              ? Text(
+                  hint,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 12, color: c.muted),
+                )
+              : null,
+          isDense: true,
+          isExpanded: true,
+          dropdownColor: c.card,
+          style: TextStyle(fontSize: 12, color: c.foreground),
+          icon: Icon(Icons.expand_more, size: 16, color: c.muted),
+          items: items,
+          onChanged: onChanged,
+        ),
       ),
     ),
   );
@@ -65,6 +75,7 @@ class StatusBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
+      constraints: const BoxConstraints(maxWidth: 180),
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(4),
@@ -72,6 +83,8 @@ class StatusBadge extends StatelessWidget {
       ),
       child: Text(
         label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(
           fontSize: 10,
           fontFamily: 'Consolas',
@@ -105,39 +118,52 @@ class InfoTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (icon != null) ...[
-          Icon(icon, size: 20, color: iconColor ?? c.muted),
-          const SizedBox(height: 6),
-        ],
-        Text(label, style: TextStyle(fontSize: 11, color: c.muted)),
-        const SizedBox(height: 4),
-        RichText(
-          text: TextSpan(
-            text: value,
-            style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.w700,
-              fontFamily: 'Consolas',
-              color: valueColor ?? c.foreground,
-            ),
-            children: unit != null
-                ? [
-                    TextSpan(
-                      text: ' $unit',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w400,
-                        color: c.muted,
-                      ),
-                    ),
-                  ]
-                : null,
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 180),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 20, color: iconColor ?? c.muted),
+            const SizedBox(height: 6),
+          ],
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 11, color: c.muted),
           ),
-        ),
-      ],
+          const SizedBox(height: 4),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: RichText(
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              text: TextSpan(
+                text: value,
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'Consolas',
+                  color: valueColor ?? c.foreground,
+                ),
+                children: unit != null
+                    ? [
+                        TextSpan(
+                          text: ' $unit',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w400,
+                            color: c.muted,
+                          ),
+                        ),
+                      ]
+                    : null,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -158,22 +184,30 @@ class ProgressBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Container(
-      height: height,
-      decoration: BoxDecoration(
-        color: c.surface,
-        borderRadius: BorderRadius.circular(3),
-      ),
-      child: FractionallySizedBox(
-        alignment: Alignment.centerLeft,
-        widthFactor: value.clamp(0.0, 1.0),
-        child: Container(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bar = Container(
+          height: height,
           decoration: BoxDecoration(
-            color: color ?? c.primary,
+            color: c.surface,
             borderRadius: BorderRadius.circular(3),
           ),
-        ),
-      ),
+          child: FractionallySizedBox(
+            alignment: Alignment.centerLeft,
+            widthFactor: value.clamp(0.0, 1.0),
+            child: Container(
+              decoration: BoxDecoration(
+                color: color ?? c.primary,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+          ),
+        );
+        if (constraints.hasBoundedWidth) {
+          return bar;
+        }
+        return SizedBox(width: 100, child: bar);
+      },
     );
   }
 }

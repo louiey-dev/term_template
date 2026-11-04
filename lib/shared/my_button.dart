@@ -21,22 +21,41 @@ class PanelActionButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Tooltip(
-      message: tooltipStr ?? '',
-      child: SizedBox(
-        height: 30,
-        child: OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            side: BorderSide(color: c.border),
-            foregroundColor: c.foreground,
-            textStyle: const TextStyle(fontSize: 11),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact =
+            constraints.hasBoundedWidth && constraints.maxWidth < 64;
+        final style = OutlinedButton.styleFrom(
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          padding: EdgeInsets.symmetric(horizontal: compact ? 4 : 10),
+          side: BorderSide(color: c.border),
+          foregroundColor: c.foreground,
+          textStyle: const TextStyle(fontSize: 11),
+        );
+        return Tooltip(
+          message: tooltipStr?.isNotEmpty == true ? tooltipStr! : label,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 30, maxWidth: 240),
+            child: compact
+                ? OutlinedButton(
+                    style: style,
+                    onPressed: onPressed,
+                    child: Icon(icon, size: 14, color: iconColor),
+                  )
+                : OutlinedButton.icon(
+                    style: style,
+                    icon: Icon(icon, size: 14, color: iconColor),
+                    label: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onPressed: onPressed,
+                  ),
           ),
-          icon: Icon(icon, size: 14, color: iconColor),
-          label: Text(label),
-          onPressed: onPressed,
-        ),
-      ),
+        );
+      },
     );
   }
 }
@@ -74,26 +93,49 @@ class _PanelToggleButtonState extends State<PanelToggleButton> {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return Tooltip(
-      message: widget.tooltipStr ?? '',
-      child: SizedBox(
-        height: 30,
-        child: OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            side: BorderSide(color: _isToggled ? c.primary : c.border),
-            backgroundColor: _isToggled ? c.primary : Colors.transparent,
-            foregroundColor: _isToggled ? c.primaryForeground : c.foreground,
-            textStyle: const TextStyle(fontSize: 11),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact =
+            constraints.hasBoundedWidth && constraints.maxWidth < 64;
+        final style = OutlinedButton.styleFrom(
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          padding: EdgeInsets.symmetric(horizontal: compact ? 4 : 10),
+          side: BorderSide(color: _isToggled ? c.primary : c.border),
+          backgroundColor: _isToggled ? c.primary : Colors.transparent,
+          foregroundColor: _isToggled ? c.primaryForeground : c.foreground,
+          textStyle: const TextStyle(fontSize: 11),
+        );
+        void toggle() {
+          setState(() => _isToggled = !_isToggled);
+          widget.onToggle?.call(_isToggled);
+        }
+
+        return Tooltip(
+          message: widget.tooltipStr?.isNotEmpty == true
+              ? widget.tooltipStr!
+              : widget.label,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 30, maxWidth: 240),
+            child: compact
+                ? OutlinedButton(
+                    style: style,
+                    onPressed: toggle,
+                    child: Icon(widget.icon, size: 14),
+                  )
+                : OutlinedButton.icon(
+                    style: style,
+                    icon: Icon(widget.icon, size: 14),
+                    label: Text(
+                      widget.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    onPressed: toggle,
+                  ),
           ),
-          icon: Icon(widget.icon, size: 14),
-          label: Text(widget.label),
-          onPressed: () {
-            setState(() => _isToggled = !_isToggled);
-            widget.onToggle?.call(_isToggled);
-          },
-        ),
-      ),
+        );
+      },
     );
   }
 }

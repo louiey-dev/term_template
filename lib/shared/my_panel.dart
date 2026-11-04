@@ -23,50 +23,57 @@ class PanelHeader extends StatelessWidget {
     final c = context.colors;
     return LayoutBuilder(
       builder: (context, constraints) {
-        return Wrap(
-          alignment: WrapAlignment.spaceBetween,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          spacing: 12,
-          runSpacing: 12,
-          children: [
-            ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: constraints.maxWidth),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, size: 20, color: iconColor),
-                  const SizedBox(width: 12),
-                  Flexible(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SelectableText(
-                          title,
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                            color: c.foreground,
+        final maxW = constraints.hasBoundedWidth ? constraints.maxWidth : null;
+        final showIcon = maxW == null || maxW >= 48;
+        return SizedBox(
+          width: maxW,
+          child: Wrap(
+            alignment: WrapAlignment.spaceBetween,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 12,
+            runSpacing: 12,
+            children: [
+              ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: maxW ?? double.infinity),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (showIcon) ...[
+                      Icon(icon, size: 20, color: iconColor),
+                      const SizedBox(width: 12),
+                    ],
+                    Flexible(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SelectableText(
+                            title,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: c.foreground,
+                            ),
                           ),
-                        ),
-                        SelectableText(
-                          subtitle,
-                          style: TextStyle(fontSize: 11, color: c.muted),
-                        ),
-                      ],
+                          SelectableText(
+                            subtitle,
+                            style: TextStyle(fontSize: 11, color: c.muted),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            if (actions.isNotEmpty)
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: actions,
-              ),
-          ],
+              if (actions.isNotEmpty)
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: actions,
+                ),
+            ],
+          ),
         );
       },
     );
@@ -90,6 +97,7 @@ class PanelBody extends StatelessWidget {
         border: Border.all(color: c.border),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: children,
       ),
@@ -134,6 +142,7 @@ class MyPanel extends StatelessWidget {
       ],
     ];
     return Column(
+      mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: spaced,
     );
@@ -163,34 +172,64 @@ class MyPanelBody extends StatelessWidget {
     final c = context.colors;
     return PanelBody(
       children: [
-        Row(
-          children: [
-            if (icon != null) ...[
-              Icon(icon, size: 16, color: c.primary),
-              const SizedBox(width: 8),
-            ],
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final maxW = constraints.hasBoundedWidth
+                ? constraints.maxWidth
+                : null;
+            final showIcon = icon != null && (maxW == null || maxW >= 40);
+            return SizedBox(
+              width: maxW,
+              child: Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 8,
+                runSpacing: 8,
                 children: [
-                  SelectableText(
-                    title,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: c.foreground,
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: maxW ?? double.infinity,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (showIcon) ...[
+                          Icon(icon, size: 16, color: c.primary),
+                          const SizedBox(width: 8),
+                        ],
+                        Flexible(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SelectableText(
+                                title,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: c.foreground,
+                                ),
+                              ),
+                              if (subtitle != null)
+                                SelectableText(
+                                  subtitle!,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: c.muted,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  if (subtitle != null)
-                    SelectableText(
-                      subtitle!,
-                      style: TextStyle(fontSize: 11, color: c.muted),
-                    ),
+                  if (trailing != null && (maxW == null || maxW >= 48))
+                    trailing!,
                 ],
               ),
-            ),
-            if (trailing != null) trailing!,
-          ],
+            );
+          },
         ),
         const SizedBox(height: 14),
         child,
