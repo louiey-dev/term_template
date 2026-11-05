@@ -15,38 +15,47 @@ Widget buildDropdown<T>(
   final safeValue = matchingCount == 1 ? value : null;
 
   return LayoutBuilder(
-    builder: (context, constraints) => Container(
-      constraints: const BoxConstraints(minHeight: 32),
-      width: constraints.hasBoundedWidth
+    builder: (context, constraints) {
+      final effectiveWidth = constraints.hasBoundedWidth
           ? width.clamp(0.0, constraints.maxWidth)
-          : width,
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      decoration: BoxDecoration(
-        color: c.surface,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: c.border),
-      ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<T>(
-          value: safeValue,
-          hint: hint != null
-              ? Text(
-                  hint,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12, color: c.muted),
-                )
-              : null,
-          isDense: true,
-          isExpanded: true,
-          dropdownColor: c.card,
-          style: TextStyle(fontSize: 12, color: c.foreground),
-          icon: Icon(Icons.expand_more, size: 16, color: c.muted),
-          items: items,
-          onChanged: onChanged,
+          : width;
+      final compact = effectiveWidth < 36;
+      final iconSize = compact ? (effectiveWidth - 2).clamp(0.0, 12.0) : 16.0;
+      return Container(
+        constraints: const BoxConstraints(minHeight: 32),
+        width: effectiveWidth,
+        padding: EdgeInsets.symmetric(horizontal: compact ? 0 : 8),
+        decoration: BoxDecoration(
+          color: c.surface,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: c.border),
         ),
-      ),
-    ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<T>(
+            value: safeValue,
+            hint: !compact && hint != null
+                ? Text(
+                    hint,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 12, color: c.muted),
+                  )
+                : null,
+            selectedItemBuilder: compact
+                ? (context) => [for (final _ in items) const SizedBox.shrink()]
+                : null,
+            isDense: true,
+            isExpanded: true,
+            dropdownColor: c.card,
+            style: TextStyle(fontSize: 12, color: c.foreground),
+            icon: Icon(Icons.expand_more, size: iconSize, color: c.muted),
+            iconSize: iconSize,
+            items: items,
+            onChanged: onChanged,
+          ),
+        ),
+      );
+    },
   );
 }
 
@@ -118,7 +127,7 @@ class InfoTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    return ConstrainedBox(
+    final tile = ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 180),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -164,6 +173,15 @@ class InfoTile extends StatelessWidget {
           ),
         ],
       ),
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) => constraints.hasBoundedHeight
+          ? FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.topCenter,
+              child: tile,
+            )
+          : tile,
     );
   }
 }

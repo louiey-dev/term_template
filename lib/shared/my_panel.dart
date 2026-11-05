@@ -141,10 +141,15 @@ class MyPanel extends StatelessWidget {
         if (i < children.length - 1) SizedBox(height: spacing),
       ],
     ];
-    return Column(
+    final content = Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: spaced,
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) => constraints.hasBoundedHeight
+          ? SingleChildScrollView(child: content)
+          : content,
     );
   }
 }

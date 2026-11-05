@@ -70,30 +70,35 @@ class _CmCmdHistoryPanelState extends ConsumerState<CmCmdHistoryPanel> {
     required VoidCallback onTrailing,
   }) {
     final c = context.colors;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        PanelActionButton(
-          icon: runIcon,
-          label: cmd,
-          tooltipStr: cmd,
-          onPressed: () => _run(cmd),
-        ),
-        Tooltip(
-          message: trailingTip,
-          child: SizedBox(
-            height: 30,
-            width: 30,
-            child: IconButton(
-              padding: EdgeInsets.zero,
-              iconSize: 15,
-              color: c.muted,
-              icon: Icon(trailingIcon),
-              onPressed: onTrailing,
+    return LayoutBuilder(
+      builder: (context, constraints) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: PanelActionButton(
+              icon: runIcon,
+              label: cmd,
+              tooltipStr: cmd,
+              onPressed: () => _run(cmd),
             ),
           ),
-        ),
-      ],
+          if (!constraints.hasBoundedWidth || constraints.maxWidth >= 60)
+            Tooltip(
+              message: trailingTip,
+              child: SizedBox(
+                height: 30,
+                width: 30,
+                child: IconButton(
+                  padding: EdgeInsets.zero,
+                  iconSize: 15,
+                  color: c.muted,
+                  icon: Icon(trailingIcon),
+                  onPressed: onTrailing,
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -103,6 +108,31 @@ class _CmCmdHistoryPanelState extends ConsumerState<CmCmdHistoryPanel> {
     final history = ref.watch(cmdHistoryNotifierProvider);
     final favorites = history.favorites;
     final recents = history.recents;
+    final commandInput = SizedBox(
+      height: 40,
+      child: TextField(
+        controller: _cmd,
+        style: const TextStyle(fontFamily: 'Consolas'),
+        decoration: const InputDecoration(
+          hintText: 'Type a command…',
+          border: OutlineInputBorder(),
+          isDense: true,
+        ),
+        onSubmitted: _run,
+      ),
+    );
+    final pinButton = PanelActionButton(
+      icon: Icons.push_pin_outlined,
+      label: 'Pin',
+      tooltipStr: 'Add this command to favorites',
+      onPressed: () => _history.pin(_cmd.text),
+    );
+    final sendButton = PanelActionButton(
+      icon: Icons.send,
+      label: 'Send',
+      tooltipStr: 'Send command to the active console',
+      onPressed: () => _run(_cmd.text),
+    );
     return MyPanel(
       icon: Icons.history,
       panelTitle: 'Command History',
@@ -112,39 +142,29 @@ class _CmCmdHistoryPanelState extends ConsumerState<CmCmdHistoryPanel> {
         MyPanelBody(
           icon: Icons.terminal,
           title: 'Send Command',
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: SizedBox(
-                  height: 40,
-                  child: TextField(
-                    controller: _cmd,
-                    style: const TextStyle(fontFamily: 'Consolas'),
-                    decoration: const InputDecoration(
-                      hintText: 'Type a command…',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    onSubmitted: _run,
+          child: LayoutBuilder(
+            builder: (context, constraints) => constraints.maxWidth < 230
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      commandInput,
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [pinButton, sendButton],
+                      ),
+                    ],
+                  )
+                : Row(
+                    children: [
+                      Expanded(child: commandInput),
+                      const SizedBox(width: 8),
+                      pinButton,
+                      const SizedBox(width: 8),
+                      sendButton,
+                    ],
                   ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              PanelActionButton(
-                icon: Icons.push_pin_outlined,
-                label: 'Pin',
-                tooltipStr: 'Add this command to favorites',
-                onPressed: () => _history.pin(_cmd.text),
-              ),
-              const SizedBox(width: 8),
-              PanelActionButton(
-                icon: Icons.send,
-                label: 'Send',
-                tooltipStr: 'Send command to the active console',
-                onPressed: () => _run(_cmd.text),
-              ),
-            ],
           ),
         ),
         MyPanelBody(
