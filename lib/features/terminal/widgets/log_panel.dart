@@ -451,6 +451,8 @@ class _Toolbar extends ConsumerWidget {
     final tabsNotifier = ref.read(terminalTabsNotifierProvider.notifier);
     final isFolded = ref.watch(terminalFoldedProvider);
     final foldNotifier = ref.read(terminalFoldedProvider.notifier);
+    final isMainFolded = ref.watch(mainPanelFoldedProvider);
+    final mainFoldNotifier = ref.read(mainPanelFoldedProvider.notifier);
 
     return Container(
       height: 32,
@@ -487,6 +489,17 @@ class _Toolbar extends ConsumerWidget {
                           : 'Fold Terminal (Alt+T)',
                       color: isFolded ? c.primary : c.muted,
                       onTap: () => foldNotifier.state = !isFolded,
+                    ),
+                    // Maximize Terminal / Fold Main Panel Toggle
+                    _MiniBtn(
+                      icon: isMainFolded
+                          ? Icons.close_fullscreen
+                          : Icons.open_in_full,
+                      tooltip: isMainFolded
+                          ? 'Restore Main Panel (Alt+M)'
+                          : 'Fold Main Panel / Maximize Terminal (Alt+M)',
+                      color: isMainFolded ? c.primary : c.muted,
+                      onTap: () => mainFoldNotifier.state = !isMainFolded,
                     ),
                     const SizedBox(width: 4),
                     // Terminal Title (clickable to expand when folded)

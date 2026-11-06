@@ -55,3 +55,5 @@ This template support UART/TERMINAL features via riverpod with custom widgets
   - hive store current baudrate and restore when re-open app
   - add custom baudrate input feature
   - add pink theme
+- 2026.11.06
+  - Main panel window is foldable

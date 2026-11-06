@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../panels/models/panel_entry.dart';
 import '../../panels/panel_registry.dart';
+import '../../terminal/providers/terminal_instances.dart';
 
 /// Tracks whether the navigation sidebar is collapsed.
 final sidebarCollapsedProvider = StateProvider<bool>((ref) => false);
@@ -104,16 +105,39 @@ class MenuSidebar extends ConsumerWidget {
                                 ),
                               ],
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.chevron_left, size: 18),
-                              color: c.muted,
-                              tooltip: 'Fold Sidebar',
-                              onPressed: () {
-                                ref
-                                        .read(sidebarCollapsedProvider.notifier)
-                                        .state =
-                                    true;
-                              },
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(
+                                    Icons.keyboard_arrow_up,
+                                    size: 18,
+                                  ),
+                                  color: c.muted,
+                                  tooltip: 'Fold Main Panel (Alt+M)',
+                                  onPressed: () {
+                                    ref
+                                            .read(
+                                              mainPanelFoldedProvider.notifier,
+                                            )
+                                            .state =
+                                        true;
+                                  },
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.chevron_left, size: 18),
+                                  color: c.muted,
+                                  tooltip: 'Fold Sidebar',
+                                  onPressed: () {
+                                    ref
+                                            .read(
+                                              sidebarCollapsedProvider.notifier,
+                                            )
+                                            .state =
+                                        true;
+                                  },
+                                ),
+                              ],
                             ),
                           ],
                         ),

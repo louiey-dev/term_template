@@ -13,7 +13,49 @@ import '../providers/serial_pane_provider.dart';
 
 const int _customBaudRateValue = -1;
 
+/// Indicates whether the top [ConnectionBar] is folded/collapsed vertically.
+final connectionBarFoldedProvider = StateProvider<bool>((ref) => false);
+
 enum _AppMenuAction { comSettings, about }
+
+enum _BarSlot { left, right }
+
+class _ConnectionBarLayoutDelegate extends MultiChildLayoutDelegate {
+  @override
+  void performLayout(Size size) {
+    var leftSize = Size.zero;
+    if (hasChild(_BarSlot.left)) {
+      leftSize = layoutChild(
+        _BarSlot.left,
+        BoxConstraints(
+          maxWidth: size.width,
+          minHeight: size.height,
+          maxHeight: size.height,
+        ),
+      );
+      positionChild(_BarSlot.left, Offset.zero);
+    }
+
+    if (hasChild(_BarSlot.right)) {
+      final remainingWidth = (size.width - leftSize.width).clamp(
+        0.0,
+        size.width,
+      );
+      final rightSize = layoutChild(
+        _BarSlot.right,
+        BoxConstraints(
+          maxWidth: remainingWidth,
+          minHeight: size.height,
+          maxHeight: size.height,
+        ),
+      );
+      positionChild(_BarSlot.right, Offset(size.width - rightSize.width, 0));
+    }
+  }
+
+  @override
+  bool shouldRelayout(covariant MultiChildLayoutDelegate oldDelegate) => false;
+}
 
 /// Top toolbar for serial port scanning, selection, connection control, and theme switching.
 class ConnectionBar extends ConsumerWidget {
@@ -41,6 +83,7 @@ class ConnectionBar extends ConsumerWidget {
         : null;
     final config = pane.config;
     final isConnected = pane.isConnected;
+    final isFolded = ref.watch(connectionBarFoldedProvider);
     final customBauds = ref.watch(customBaudRatesProvider);
     final allBaudRates = {
       ...standardBaudRates,
@@ -48,19 +91,26 @@ class ConnectionBar extends ConsumerWidget {
       if (config.baudRate > 0) config.baudRate,
     }.toList()..sort();
 
-    return Container(
-      height: 48,
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeInOut,
+      height: isFolded ? 28 : 48,
+      clipBehavior: Clip.hardEdge,
       decoration: BoxDecoration(
         color: c.card,
         border: Border(bottom: BorderSide(color: c.border)),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Row(
+      child: CustomMultiChildLayout(
+        delegate: _ConnectionBarLayoutDelegate(),
         children: [
-          Expanded(
+          LayoutId(
+            id: _BarSlot.left,
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
+              reverse: true,
               child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   // App menu (COM settings / About)
                   _AppMenuButton(
@@ -222,52 +272,92 @@ class ConnectionBar extends ConsumerWidget {
               ),
             ),
           ),
+          LayoutId(
+            id: _BarSlot.right,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const SizedBox(width: 8),
 
-          const SizedBox(width: 8),
+                  // Main Panel toggle
+                  Tooltip(
+                    message: ref.watch(mainPanelFoldedProvider)
+                        ? 'Expand main panel (Alt+M)'
+                        : 'Fold main panel (Alt+M)',
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.dashboard_customize,
+                        size: 18,
+                        color: ref.watch(mainPanelFoldedProvider)
+                            ? c.muted
+                            : c.primary,
+                      ),
+                      onPressed: () {
+                        final notifier = ref.read(
+                          mainPanelFoldedProvider.notifier,
+                        );
+                        notifier.state = !notifier.state;
+                      },
+                    ),
+                  ),
 
-          // Terminal Panel toggle
-          Tooltip(
-            message: ref.watch(terminalFoldedProvider)
-                ? 'Expand terminal panel (Alt+T)'
-                : 'Fold terminal panel (Alt+T)',
-            child: IconButton(
-              icon: Icon(
-                Icons.terminal,
-                size: 18,
-                color: ref.watch(terminalFoldedProvider) ? c.muted : c.primary,
+                  const SizedBox(width: 4),
+
+                  // Terminal Panel toggle
+                  Tooltip(
+                    message: ref.watch(terminalFoldedProvider)
+                        ? 'Expand terminal panel (Alt+T)'
+                        : 'Fold terminal panel (Alt+T)',
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.terminal,
+                        size: 18,
+                        color: ref.watch(terminalFoldedProvider)
+                            ? c.muted
+                            : c.primary,
+                      ),
+                      onPressed: () {
+                        final notifier = ref.read(
+                          terminalFoldedProvider.notifier,
+                        );
+                        notifier.state = !notifier.state;
+                      },
+                    ),
+                  ),
+
+                  const SizedBox(width: 4),
+
+                  // Theme toggle (cycles Dark -> Dark Blue -> Medium -> Green -> Pink -> Light)
+                  Tooltip(
+                    message: switch (themeMode) {
+                      AppThemeMode.dark => 'Theme: Dark (click for Dark Blue)',
+                      AppThemeMode.darkBlue =>
+                        'Theme: Dark Blue (click for Medium)',
+                      AppThemeMode.medium => 'Theme: Medium (click for Green)',
+                      AppThemeMode.green => 'Theme: Green (click for Pink)',
+                      AppThemeMode.pink => 'Theme: Pink (click for Light)',
+                      AppThemeMode.light => 'Theme: Light (click for Dark)',
+                    },
+                    child: IconButton(
+                      icon: Icon(themeMode.icon, size: 18, color: c.muted),
+                      onPressed: () =>
+                          ref.read(themeModeProvider.notifier).toggle(),
+                    ),
+                  ),
+
+                  const SizedBox(width: 8),
+
+                  // Status indicator pill
+                  _StatusPill(
+                    config: config,
+                    isConnected: isConnected,
+                    hasPane: hasPane,
+                  ),
+                ],
               ),
-              onPressed: () {
-                final notifier = ref.read(terminalFoldedProvider.notifier);
-                notifier.state = !notifier.state;
-              },
             ),
-          ),
-
-          const SizedBox(width: 4),
-
-          // Theme toggle (cycles Dark -> Dark Blue -> Medium -> Green -> Pink -> Light)
-          Tooltip(
-            message: switch (themeMode) {
-              AppThemeMode.dark => 'Theme: Dark (click for Dark Blue)',
-              AppThemeMode.darkBlue => 'Theme: Dark Blue (click for Medium)',
-              AppThemeMode.medium => 'Theme: Medium (click for Green)',
-              AppThemeMode.green => 'Theme: Green (click for Pink)',
-              AppThemeMode.pink => 'Theme: Pink (click for Light)',
-              AppThemeMode.light => 'Theme: Light (click for Dark)',
-            },
-            child: IconButton(
-              icon: Icon(themeMode.icon, size: 18, color: c.muted),
-              onPressed: () => ref.read(themeModeProvider.notifier).toggle(),
-            ),
-          ),
-
-          const SizedBox(width: 8),
-
-          // Status indicator pill
-          _StatusPill(
-            config: config,
-            isConnected: isConnected,
-            hasPane: hasPane,
           ),
         ],
       ),

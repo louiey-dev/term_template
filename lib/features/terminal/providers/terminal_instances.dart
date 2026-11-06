@@ -8,6 +8,10 @@ final terminalPausedProvider = StateProvider<bool>((ref) => false);
 /// Indicates whether the bottom terminal panel is folded/collapsed vertically.
 final terminalFoldedProvider = StateProvider<bool>((ref) => false);
 
+/// Indicates whether the top main panel is folded/collapsed vertically so the
+/// terminal panel occupies most of the window.
+final mainPanelFoldedProvider = StateProvider<bool>((ref) => false);
+
 /// Global provider for managing active terminal tabs.
 final terminalTabsNotifierProvider =
     NotifierProvider<TerminalTabsNotifier, List<TerminalTab>>(
