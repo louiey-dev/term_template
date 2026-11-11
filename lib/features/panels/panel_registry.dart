@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 
 import 'common/cm_cmd_history.dart';
 import 'common/cm_general_settings.dart';
+import 'common/cm_widgets.dart';
 import 'models/panel_entry.dart';
 
 /// Registry mapping unique panel IDs to widget factory functions.
 final Map<String, Widget Function()> panelRegistry = {
   'cm_cmd_history': () => const CmCmdHistoryPanel(),
   'cm_general': () => const CmGeneralSettingsPanel(),
+  'cm_widgets': () => const CmWidgetsPanel(),
 };
 
 /// Defined panel navigation groups displayed in the menu sidebar.
@@ -27,6 +29,12 @@ final List<PanelGroup> panelGroups = [
         label: 'General Settings',
         description: 'System info and diagnostic commands',
         icon: Icons.settings,
+      ),
+      PanelEntry(
+        id: 'cm_widgets',
+        label: 'Widgets',
+        description: 'Shared UI widget reference & samples',
+        icon: Icons.widgets_outlined,
       ),
     ],
   ),
