@@ -11,7 +11,8 @@ enum AppThemeMode {
   darkBlue('Dark Blue', Icons.nights_stay_outlined),
   medium('Medium', Icons.brightness_medium_outlined),
   green('Green', Icons.eco_outlined),
-  pink('Pink', Icons.favorite_outline);
+  pink('Pink', Icons.favorite_outline),
+  yellowGrey('Yellow Grey', Icons.wb_sunny_outlined);
 
   const AppThemeMode(this.label, this.icon);
 
@@ -26,15 +27,16 @@ enum AppThemeMode {
     AppThemeMode.medium => AppTheme.mediumTheme,
     AppThemeMode.green => AppTheme.greenTheme,
     AppThemeMode.pink => AppTheme.pinkTheme,
+    AppThemeMode.yellowGrey => AppTheme.yellowGreyTheme,
   };
 
   /// Returns the next [AppThemeMode] in the cycle:
-  /// light -> dark -> darkBlue -> medium -> green -> pink -> light.
+  /// light -> dark -> darkBlue -> medium -> green -> pink -> yellowGrey -> light.
   AppThemeMode get next =>
       AppThemeMode.values[(index + 1) % AppThemeMode.values.length];
 }
 
-/// Provider for managing application theme mode (light, dark, darkBlue, medium, green, pink),
+/// Provider for managing application theme mode (light, dark, darkBlue, medium, green, pink, yellowGrey),
 /// persisted in the `app_settings` Hive box.
 final themeModeProvider = NotifierProvider<ThemeModeNotifier, AppThemeMode>(
   ThemeModeNotifier.new,
@@ -60,7 +62,7 @@ class ThemeModeNotifier extends Notifier<AppThemeMode> {
     }
   }
 
-  /// Cycles through light, dark, darkBlue, medium, green, and pink themes.
+  /// Cycles through light, dark, darkBlue, medium, green, pink, and yellowGrey themes.
   void toggle() => set(state.next);
 
   AppThemeMode _parse(String? raw) => switch (raw) {
@@ -70,6 +72,7 @@ class ThemeModeNotifier extends Notifier<AppThemeMode> {
     'medium' => AppThemeMode.medium,
     'green' => AppThemeMode.green,
     'pink' => AppThemeMode.pink,
+    'yellowGrey' => AppThemeMode.yellowGrey,
     _ => AppThemeMode.darkBlue,
   };
 }

@@ -329,17 +329,10 @@ class ConnectionBar extends ConsumerWidget {
 
                   const SizedBox(width: 4),
 
-                  // Theme toggle (cycles Dark -> Dark Blue -> Medium -> Green -> Pink -> Light)
+                  // Theme toggle (cycles Dark -> Dark Blue -> Medium -> Green -> Pink -> Yellow Grey -> Light)
                   Tooltip(
-                    message: switch (themeMode) {
-                      AppThemeMode.dark => 'Theme: Dark (click for Dark Blue)',
-                      AppThemeMode.darkBlue =>
-                        'Theme: Dark Blue (click for Medium)',
-                      AppThemeMode.medium => 'Theme: Medium (click for Green)',
-                      AppThemeMode.green => 'Theme: Green (click for Pink)',
-                      AppThemeMode.pink => 'Theme: Pink (click for Light)',
-                      AppThemeMode.light => 'Theme: Light (click for Dark)',
-                    },
+                    message:
+                        'Theme: ${themeMode.label} (click for ${themeMode.next.label})',
                     child: IconButton(
                       icon: Icon(themeMode.icon, size: 18, color: c.muted),
                       onPressed: () =>

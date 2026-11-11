@@ -59,3 +59,4 @@ This template support UART/TERMINAL features via riverpod with custom widgets
   - Main panel window is foldable
 - 2026.11.11
   - add Widgets sub panel which explains shared widgets
+  - add yellow/grey theme
