@@ -51,8 +51,10 @@ class MenuSidebar extends ConsumerWidget {
         color: c.sidebar,
         border: Border(right: BorderSide(color: c.border)),
       ),
-      child: Column(
-        children: [
+      child: Material(
+        color: Colors.transparent,
+        child: Column(
+          children: [
           // Sidebar Fold / Unfold Toggle Header
           Container(
             height: 40,
@@ -162,8 +164,9 @@ class MenuSidebar extends ConsumerWidget {
                     hasAnyActiveGroup,
                     c,
                   ),
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -60,3 +60,4 @@ This template support UART/TERMINAL features via riverpod with custom widgets
 - 2026.11.11
   - add Widgets sub panel which explains shared widgets
   - add yellow/grey theme
+  - store TERMINAL status to HIVE and restore

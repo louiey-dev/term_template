@@ -30,12 +30,28 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _splitController = MultiSplitViewController(
-      areas: [
-        Area(flex: 3, id: 'main'),
-        Area(flex: 1, id: 'log'),
-      ],
-    );
+    final (mainFlex, logFlex) = TerminalLayoutPersistence.readVerticalFlex();
+    _lastMainFlex = mainFlex;
+    _lastLogFlex = logFlex;
+    final isTermFolded = ref.read(terminalFoldedProvider);
+    final isMainFolded = ref.read(mainPanelFoldedProvider);
+
+    final initialAreas = isTermFolded
+        ? [
+            Area(flex: 1, id: 'main'),
+            Area(size: 32, id: 'log'),
+          ]
+        : isMainFolded
+        ? [
+            Area(size: 32, id: 'main'),
+            Area(flex: 1, id: 'log'),
+          ]
+        : [
+            Area(flex: _lastMainFlex, id: 'main'),
+            Area(flex: _lastLogFlex, id: 'log'),
+          ];
+
+    _splitController = MultiSplitViewController(areas: initialAreas);
     _splitController.addListener(_onSplitChange);
     HardwareKeyboard.instance.addHandler(_handleKey);
   }
@@ -57,6 +73,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         areas[1].flex! > 0) {
       _lastMainFlex = areas[0].flex!;
       _lastLogFlex = areas[1].flex!;
+      TerminalLayoutPersistence.saveVerticalFlex(_lastMainFlex, _lastLogFlex);
     }
   }
 
@@ -92,6 +109,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           break;
         }
       }
+    }
+    if (!ref.read(terminalFoldedProvider) &&
+        !ref.read(mainPanelFoldedProvider)) {
+      _saveFlexIfUnfolded();
     }
   }
 

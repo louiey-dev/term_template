@@ -40,9 +40,14 @@ class _LogPanelState extends ConsumerState<LogPanel> {
     super.initState();
     _registry = ref.read(boardConsoleRegistryProvider);
     final tabs = ref.read(terminalTabsNotifierProvider);
+    final savedFlexes = TerminalLayoutPersistence.readPaneFlexes();
     _splitController = MultiSplitViewController(
-      areas: [for (final t in tabs) Area(id: t.id, flex: 1)],
+      areas: [
+        for (final t in tabs)
+          Area(id: t.id, flex: savedFlexes[t.id] ?? 1.0),
+      ],
     );
+    _splitController.addListener(_onPaneSplitChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _ensurePtys(tabs);
     });
@@ -50,6 +55,7 @@ class _LogPanelState extends ConsumerState<LogPanel> {
 
   @override
   void dispose() {
+    _splitController.removeListener(_onPaneSplitChanged);
     _splitController.dispose();
     for (final timer in _ptyResizeDebouncers.values) {
       timer.cancel();
@@ -64,11 +70,28 @@ class _LogPanelState extends ConsumerState<LogPanel> {
     super.dispose();
   }
 
+  void _onPaneSplitChanged() {
+    final flexes = <String, double>{};
+    for (final area in _splitController.areas) {
+      final id = area.id?.toString();
+      final flex = area.flex;
+      if (id != null && flex != null && flex > 0) {
+        flexes[id] = flex;
+      }
+    }
+    if (flexes.isNotEmpty) {
+      TerminalLayoutPersistence.savePaneFlexes(flexes);
+    }
+  }
+
   void _syncAreas(List<TerminalTab> tabs) {
     final existing = {for (final a in _splitController.areas) a.id: a};
+    final savedFlexes = TerminalLayoutPersistence.readPaneFlexes();
     _splitController.areas = [
-      for (final t in tabs) existing[t.id] ?? Area(id: t.id, flex: 1),
+      for (final t in tabs)
+        existing[t.id] ?? Area(id: t.id, flex: savedFlexes[t.id] ?? 1.0),
     ];
+    _onPaneSplitChanged();
   }
 
   void _ensurePtys(List<TerminalTab> tabs) {
@@ -93,6 +116,7 @@ class _LogPanelState extends ConsumerState<LogPanel> {
         _registry.unregister(id);
         _ptyStarted.remove(id);
         _ptyResizeDebouncers.remove(id)?.cancel();
+        SerialPaneNotifier.deletePersistedConfig(id);
       }
     }
     _syncAreas(next);

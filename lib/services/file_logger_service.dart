@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:hive_ce/hive.dart';
 import 'package:path/path.dart' as p;
 
 /// State for the file logging service.
@@ -27,6 +28,9 @@ final fileLoggerNotifierProvider =
 
 /// Streams terminal output into timestamped log files.
 class FileLoggerNotifier extends Notifier<FileLoggerState> {
+  static const _boxName = 'app_settings';
+  static const _timestampKey = 'terminal_log_timestamp';
+
   IOSink? _sink;
   String _buffer = '';
   bool _needsTimestamp = true;
@@ -37,7 +41,14 @@ class FileLoggerNotifier extends Notifier<FileLoggerState> {
   @override
   FileLoggerState build() {
     ref.onDispose(_closeSink);
-    return const FileLoggerState();
+    var timestampEnabled = true;
+    if (Hive.isBoxOpen(_boxName)) {
+      final raw = Hive.box<String>(_boxName).get(_timestampKey);
+      if (raw != null) {
+        timestampEnabled = raw == 'true';
+      }
+    }
+    return FileLoggerState(timestampEnabled: timestampEnabled);
   }
 
   /// Prompts the user to select a folder and starts logging terminal traffic.
@@ -93,6 +104,9 @@ class FileLoggerNotifier extends Notifier<FileLoggerState> {
   /// Toggles timestamp prepending on each log line.
   void setTimestamp(bool enabled) {
     state = state.copyWith(timestampEnabled: enabled);
+    if (Hive.isBoxOpen(_boxName)) {
+      Hive.box<String>(_boxName).put(_timestampKey, enabled.toString());
+    }
   }
 
   /// Writes output data into the log file after stripping escape characters.

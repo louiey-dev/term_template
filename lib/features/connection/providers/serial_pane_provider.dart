@@ -126,7 +126,27 @@ final serialPaneNotifierProvider =
     );
 
 /// Explicitly selected active SERIAL tab id (set when a pane is tapped).
-final serialActiveTabIdProvider = StateProvider<String?>((ref) => null);
+final serialActiveTabIdProvider =
+    NotifierProvider<SerialActiveTabIdNotifier, String?>(
+      SerialActiveTabIdNotifier.new,
+    );
+
+/// Notifier tracking and persisting the explicitly selected SERIAL tab ID.
+class SerialActiveTabIdNotifier extends Notifier<String?> {
+  @override
+  String? build() {
+    listenSelf(
+      (prev, next) => TerminalLayoutPersistence.saveSerialActiveTabId(next),
+    );
+    return TerminalLayoutPersistence.readSerialActiveTabId();
+  }
+
+  @override
+  String? get state => super.state;
+
+  @override
+  set state(String? value) => super.state = value;
+}
 
 /// Resolves the SERIAL tab that the connection bar currently controls.
 final effectiveActiveSerialTabIdProvider = Provider<String?>((ref) {
@@ -149,6 +169,7 @@ final effectiveActiveSerialTabIdProvider = Provider<String?>((ref) {
 class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
   static const _boxName = 'app_settings';
   static const _baudRateKey = 'serial_baud_rate';
+  static const _paneConfigPrefix = 'serial_pane_config_';
   static const int defaultBaudRate = 115200;
 
   SerialPort? _port;
@@ -171,12 +192,60 @@ class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
     return defaultBaudRate;
   }
 
+  /// Deletes persisted serial configuration for a closed tab [id].
+  static void deletePersistedConfig(String id) {
+    if (Hive.isBoxOpen(_boxName)) {
+      Hive.box<String>(_boxName).delete('$_paneConfigPrefix$id');
+    }
+  }
+
   @override
   SerialPaneState build(String arg) {
     ref.onDispose(_cleanup);
-    final baud = getPersistedBaudRate();
-    return SerialPaneState(
-      config: SerialConfig(baudRate: baud),
+    return SerialPaneState(config: _loadPaneConfig(arg));
+  }
+
+  SerialConfig _loadPaneConfig(String tabId) {
+    final fallbackBaud = getPersistedBaudRate();
+    if (!Hive.isBoxOpen(_boxName)) {
+      return SerialConfig(baudRate: fallbackBaud);
+    }
+    final raw = Hive.box<String>(_boxName).get('$_paneConfigPrefix$tabId');
+    if (raw == null || raw.isEmpty) {
+      return SerialConfig(baudRate: fallbackBaud);
+    }
+    try {
+      final map = jsonDecode(raw) as Map<String, dynamic>;
+      final baud = (map['baudRate'] as num?)?.toInt() ?? fallbackBaud;
+      final encName = map['encoding']?.toString();
+      final nlName = map['newLine']?.toString();
+      final encoding = SerialEncoding.values.firstWhere(
+        (e) => e.name == encName,
+        orElse: () => SerialEncoding.utf8,
+      );
+      final newLine = NewLine.values.firstWhere(
+        (n) => n.name == nlName,
+        orElse: () => NewLine.none,
+      );
+      return SerialConfig(
+        baudRate: baud > 0 ? baud : fallbackBaud,
+        encoding: encoding,
+        newLine: newLine,
+      );
+    } catch (_) {
+      return SerialConfig(baudRate: fallbackBaud);
+    }
+  }
+
+  void _savePaneConfig(SerialConfig cfg) {
+    if (!Hive.isBoxOpen(_boxName)) return;
+    Hive.box<String>(_boxName).put(
+      '$_paneConfigPrefix$arg',
+      jsonEncode({
+        'baudRate': cfg.baudRate,
+        'encoding': cfg.encoding.name,
+        'newLine': cfg.newLine.name,
+      }),
     );
   }
 
@@ -208,8 +277,10 @@ class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
       state = state.copyWith(config: state.config.copyWith(port: port));
 
   void setBaudRate(int baud) {
-    state = state.copyWith(config: state.config.copyWith(baudRate: baud));
+    final updated = state.config.copyWith(baudRate: baud);
+    state = state.copyWith(config: updated);
     _saveBaudRate(baud);
+    _savePaneConfig(updated);
   }
 
   static void _saveBaudRate(int baud) {
@@ -218,11 +289,17 @@ class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
     }
   }
 
-  void setEncoding(SerialEncoding enc) =>
-      state = state.copyWith(config: state.config.copyWith(encoding: enc));
+  void setEncoding(SerialEncoding enc) {
+    final updated = state.config.copyWith(encoding: enc);
+    state = state.copyWith(config: updated);
+    _savePaneConfig(updated);
+  }
 
-  void setNewLine(NewLine nl) =>
-      state = state.copyWith(config: state.config.copyWith(newLine: nl));
+  void setNewLine(NewLine nl) {
+    final updated = state.config.copyWith(newLine: nl);
+    state = state.copyWith(config: updated);
+    _savePaneConfig(updated);
+  }
 
   /// Opens the serial port and initiates the background read stream.
   Future<void> connect() async {
