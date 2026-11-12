@@ -739,8 +739,41 @@ class _Win32SerialBackend implements _SerialBackend {
   static int get _overlappedEventOffset =>
       ffi.sizeOf<ffi.IntPtr>() == 8 ? 24 : 16;
 
+  static bool _ffiWarmedUp = false;
+
+  /// Eagerly resolves all lazy `static final` FFI function pointers before I/O.
+  ///
+  /// Without this, the first access to `_getLastError` after `_writeFile`
+  /// returns `FALSE` (`ERROR_IO_PENDING`) triggers `DynamicLibrary.lookupFunction`
+  /// (`GetProcAddress`) inside the Dart VM, which overwrites the Win32 thread's
+  /// `LastError` from `997` (`ERROR_IO_PENDING`) to `0` (`ERROR_SUCCESS`).
+  static void _warmUpFfi() {
+    if (_ffiWarmedUp) return;
+    _ffiWarmedUp = true;
+    _localAlloc;
+    _localFree;
+    _createFileW;
+    _closeHandle;
+    _getLastError();
+    _setupComm;
+    _getCommState;
+    _setCommState;
+    _setCommTimeouts;
+    _escapeCommFunction;
+    _purgeComm;
+    _clearCommError;
+    _readFile;
+    _writeFile;
+    _createEventW;
+    _resetEvent;
+    _waitForSingleObject;
+    _getOverlappedResult;
+    _cancelIoEx;
+  }
+
   @override
   void open() {
+    _warmUpFfi();
     final normalized = portName.startsWith(r'\\.\')
         ? portName
         : '\\\\.\\$portName';
@@ -901,7 +934,7 @@ class _Win32SerialBackend implements _SerialBackend {
     );
     if (ok == 0) {
       final err = _getLastError();
-      if (err == _errorIoPending) {
+      if (err == _errorIoPending || err == 0) {
         final waitRes = _waitForSingleObject(_readEvent, 50);
         if (waitRes != _waitObject0 ||
             _getOverlappedResult(_hPort, _readOvl, _bytesTransferredPtr, 0) ==
@@ -943,10 +976,21 @@ class _Win32SerialBackend implements _SerialBackend {
       );
       if (ok == 0) {
         final err = _getLastError();
-        if (err == _errorIoPending) {
+        if (err == _errorIoPending || err == 0) {
           final waitRes = _waitForSingleObject(_writeEvent, 250);
           if (waitRes == _waitObject0) {
-            _getOverlappedResult(_hPort, _writeOvl, _bytesTransferredPtr, 0);
+            if (_getOverlappedResult(
+                  _hPort,
+                  _writeOvl,
+                  _bytesTransferredPtr,
+                  0,
+                ) ==
+                0) {
+              final ovlErr = _getLastError();
+              throw StateError(
+                'WriteFile failed on $portName (Win32 error $ovlErr)',
+              );
+            }
           } else {
             _cancelIoEx(_hPort, _writeOvl);
             _getOverlappedResult(_hPort, _writeOvl, _bytesTransferredPtr, 1);

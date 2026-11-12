@@ -21,6 +21,13 @@ This guide documents the root causes in `flutter_libserialport` (`libserialport`
    - `SerialPortConfig()..setFlowControl(SerialPortFlowControl.none)` leaves `dtr = -1` and `rts = -1` on a newly allocated config struct, so `DTR_CONTROL_ENABLE` and `RTS_CONTROL_ENABLE` are never asserted in the Windows `DCB`.
    - `port.write(bytes)` defaults to `timeout = -1` (`sp_nonblocking_write`), which silently drops writes (`return 0`) whenever a previous overlapped write is still pending.
 
+4. **First-Connection `WriteFile failed on COMx (Win32 error 0)` from Lazy FFI Initialization**:
+   - In `_Win32SerialBackend`, Win32 FFI bindings (`_getLastError`, `_writeFile`, etc.) are declared as `static final` fields, which Dart initializes **lazily on first access**.
+   - During `open()` and `readAvailable()`, all Win32 calls succeed synchronously, so `_getLastError` is never accessed.
+   - On the very first `write()` call on the `FILE_FLAG_OVERLAPPED` handle, `WriteFile` queues the transfer asynchronously, sets the thread's Win32 `LastError` to `ERROR_IO_PENDING` (`997`), and returns `0` (`FALSE`).
+   - Reading `_getLastError` for the first time triggers `_kernel32.lookupFunction('GetLastError')` inside the Dart VM, which calls Win32 `GetProcAddress` and allocates the FFI trampoline before invoking `GetLastError()`. Those internal Win32 calls succeed and overwrite the thread's `LastError` from `997` to `0` (`ERROR_SUCCESS`), causing `err == _errorIoPending` to fail with `Bad state: WriteFile failed on COMx (Win32 error 0)` on the 1st connection only.
+   - Pre-resolving all FFI symbols in `_warmUpFfi()` at the start of `open()` and treating `err == _errorIoPending || err == 0` when `ReadFile` / `WriteFile` returns `0` (verifying completion via `WaitForSingleObject` + `GetOverlappedResult`) eliminates this failure.
+
 ## How to Patch Derived Apps
 
 ### Step 1: Update Imports in `serial_pane_provider.dart`
@@ -172,7 +179,7 @@ Replace `send`, `runCommand`, `connect`, `disconnect`, and `_cleanup` in `Serial
 
 ### Step 4: Add `_SerialBackend`, `_LibSerialPortBackend`, and `_Win32SerialBackend`
 
-Append the backend classes to the bottom of `lib/features/connection/providers/serial_pane_provider.dart` (see lines 421–999 of [`serial_pane_provider.dart`](file:///D:/GIT/GitHub/term_template/lib/features/connection/providers/serial_pane_provider.dart#L421-L999)):
+Append the backend classes to the bottom of `lib/features/connection/providers/serial_pane_provider.dart` (see lines 420–1043 of [`serial_pane_provider.dart`](file:///D:/GIT/GitHub/term_template/lib/features/connection/providers/serial_pane_provider.dart#L420-L1043)):
 
 ```dart
 abstract class _SerialBackend {
@@ -481,8 +488,35 @@ class _Win32SerialBackend implements _SerialBackend {
   static int get _overlappedEventOffset =>
       ffi.sizeOf<ffi.IntPtr>() == 8 ? 24 : 16;
 
+  static bool _ffiWarmedUp = false;
+
+  static void _warmUpFfi() {
+    if (_ffiWarmedUp) return;
+    _ffiWarmedUp = true;
+    _localAlloc;
+    _localFree;
+    _createFileW;
+    _closeHandle;
+    _getLastError();
+    _setupComm;
+    _getCommState;
+    _setCommState;
+    _setCommTimeouts;
+    _escapeCommFunction;
+    _purgeComm;
+    _clearCommError;
+    _readFile;
+    _writeFile;
+    _createEventW;
+    _resetEvent;
+    _waitForSingleObject;
+    _getOverlappedResult;
+    _cancelIoEx;
+  }
+
   @override
   void open() {
+    _warmUpFfi();
     final normalized = portName.startsWith(r'\\.\')
         ? portName
         : '\\\\.\\$portName';
@@ -636,7 +670,7 @@ class _Win32SerialBackend implements _SerialBackend {
     );
     if (ok == 0) {
       final err = _getLastError();
-      if (err == _errorIoPending) {
+      if (err == _errorIoPending || err == 0) {
         final waitRes = _waitForSingleObject(_readEvent, 50);
         if (waitRes != _waitObject0 ||
             _getOverlappedResult(_hPort, _readOvl, _bytesTransferredPtr, 0) ==
@@ -678,10 +712,21 @@ class _Win32SerialBackend implements _SerialBackend {
       );
       if (ok == 0) {
         final err = _getLastError();
-        if (err == _errorIoPending) {
+        if (err == _errorIoPending || err == 0) {
           final waitRes = _waitForSingleObject(_writeEvent, 250);
           if (waitRes == _waitObject0) {
-            _getOverlappedResult(_hPort, _writeOvl, _bytesTransferredPtr, 0);
+            if (_getOverlappedResult(
+                  _hPort,
+                  _writeOvl,
+                  _bytesTransferredPtr,
+                  0,
+                ) ==
+                0) {
+              final ovlErr = _getLastError();
+              throw StateError(
+                'WriteFile failed on $portName (Win32 error $ovlErr)',
+              );
+            }
           } else {
             _cancelIoEx(_hPort, _writeOvl);
             _getOverlappedResult(_hPort, _writeOvl, _bytesTransferredPtr, 1);
