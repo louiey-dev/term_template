@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ffi' as ffi;
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_libserialport/flutter_libserialport.dart';
@@ -172,9 +174,9 @@ class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
   static const _paneConfigPrefix = 'serial_pane_config_';
   static const int defaultBaudRate = 115200;
 
-  SerialPort? _port;
-  SerialPortReader? _reader;
-  StreamSubscription<Uint8List>? _sub;
+  _SerialBackend? _backend;
+  Timer? _readTimer;
+  bool _reading = false;
   final ConsoleCommandSession _cmd = ConsoleCommandSession();
 
   bool get isConnected => state.isConnected;
@@ -251,10 +253,10 @@ class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
 
   /// Writes raw string data to the open serial port.
   void send(String data) {
-    final port = _port;
-    if (port == null) return;
+    final backend = _backend;
+    if (backend == null) return;
     try {
-      port.write(Uint8List.fromList(utf8.encode(data)));
+      backend.write(Uint8List.fromList(utf8.encode(data)));
     } catch (_) {}
   }
 
@@ -263,11 +265,11 @@ class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
     String command, {
     Duration timeout = const Duration(seconds: 4),
   }) {
-    if (_port == null) {
+    if (_backend == null) {
       return Future.error(StateError('Serial port is not connected'));
     }
     return _cmd.run(
-      (data) => _port?.write(Uint8List.fromList(utf8.encode(data))),
+      (data) => _backend?.write(Uint8List.fromList(utf8.encode(data))),
       command,
       timeout: timeout,
     );
@@ -301,64 +303,86 @@ class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
     _savePaneConfig(updated);
   }
 
-  /// Opens the serial port and initiates the background read stream.
+  /// Opens the serial port and initiates the periodic non-blocking read loop.
   Future<void> connect() async {
     final cfg = state.config;
-    if (cfg.port.isEmpty || state.isConnected) return;
+    if (cfg.port.isEmpty ||
+        state.isConnected ||
+        state.status == SerialStatus.connecting) {
+      return;
+    }
+    _cleanup();
     state = state.copyWith(status: SerialStatus.connecting, error: null);
 
     try {
-      final port = SerialPort(cfg.port);
-      if (!port.openReadWrite()) {
-        port.dispose();
-        throw SerialPortError(
-          SerialPort.lastError?.message ?? 'Failed to open port',
-        );
-      }
-      port.config = SerialPortConfig()
-        ..baudRate = cfg.baudRate
-        ..bits = 8
-        ..parity = SerialPortParity.none
-        ..stopBits = 1
-        ..setFlowControl(SerialPortFlowControl.none);
-      _port = port;
+      final backend = Platform.isWindows
+          ? _Win32SerialBackend(cfg.port, cfg.baudRate)
+          : _LibSerialPortBackend(cfg.port, cfg.baudRate);
+      backend.open();
+      _backend = backend;
 
-      final terminal = _terminal();
-      final reader = SerialPortReader(port);
-      _reader = reader;
-      _sub = reader.stream.listen(
-        (data) {
-          final text = _decode(data, state.config.encoding);
-          _cmd.feed(text);
-          if (!ref.read(terminalPausedProvider)) {
-            terminal?.write(text);
-            ref.read(fileLoggerNotifierProvider.notifier).log(text);
-          }
-        },
-        onError: (Object e) {
-          state = state.copyWith(
-            status: SerialStatus.disconnected,
-            error: '$e',
-          );
-          _cleanup();
-        },
+      _bindTerminalOutput();
+      _readTimer = Timer.periodic(
+        const Duration(milliseconds: 10),
+        (_) => _pollRead(),
       );
-
-      terminal?.onOutput = (data) {
-        final nl = state.config.newLine;
-        final out = nl == NewLine.none
-            ? data
-            : data.replaceAll('\r', nl.suffix);
-        try {
-          _port?.write(Uint8List.fromList(utf8.encode(out)));
-        } catch (_) {}
-      };
 
       state = state.copyWith(status: SerialStatus.connected, error: null);
     } catch (e) {
       _cleanup();
+      _terminal()?.write('\r\n[Serial error: $e]\r\n');
       state = state.copyWith(status: SerialStatus.disconnected, error: '$e');
     }
+  }
+
+  void _bindTerminalOutput() {
+    final terminal = _terminal();
+    if (terminal == null) return;
+    terminal.onOutput = (data) {
+      final nl = state.config.newLine;
+      final out = nl == NewLine.none ? data : data.replaceAll('\r', nl.suffix);
+      try {
+        _backend?.write(Uint8List.fromList(utf8.encode(out)));
+      } catch (e) {
+        _handleFatalError(e);
+      }
+    };
+  }
+
+  void _pollRead() {
+    if (_reading) return;
+    final backend = _backend;
+    if (backend == null) return;
+    _reading = true;
+    try {
+      // Ensure terminal onOutput handler remains bound to the current tab's terminal.
+      final terminal = _terminal();
+      if (terminal != null && terminal.onOutput == null) {
+        _bindTerminalOutput();
+      }
+
+      // Drain up to 4 chunks (64 KB) per 10 ms tick to sustain high baud rates.
+      for (var i = 0; i < 4; i++) {
+        final data = backend.readAvailable();
+        if (data == null || data.isEmpty) break;
+        final text = _decode(data, state.config.encoding);
+        _cmd.feed(text);
+        if (!ref.read(terminalPausedProvider)) {
+          terminal?.write(text);
+          ref.read(fileLoggerNotifierProvider.notifier).log(text);
+        }
+      }
+    } catch (e) {
+      _handleFatalError(e);
+    } finally {
+      _reading = false;
+    }
+  }
+
+  void _handleFatalError(Object e) {
+    _cleanup();
+    _terminal()?.write('\r\n[Serial disconnected: $e]\r\n');
+    state = state.copyWith(status: SerialStatus.disconnected, error: '$e');
   }
 
   /// Closes the active serial port and clears error state.
@@ -385,12 +409,591 @@ class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
   };
 
   void _cleanup() {
-    _sub?.cancel();
-    _sub = null;
-    _reader?.close();
-    _reader = null;
-    _port?.close();
-    _port?.dispose();
+    _readTimer?.cancel();
+    _readTimer = null;
+    _reading = false;
+    _backend?.close();
+    _backend = null;
+  }
+}
+
+abstract class _SerialBackend {
+  void open();
+  Uint8List? readAvailable();
+  void write(Uint8List data);
+  void close();
+}
+
+/// Cross-platform fallback serial backend using `flutter_libserialport` without
+/// its broken `SerialPortReader` isolate.
+class _LibSerialPortBackend implements _SerialBackend {
+  _LibSerialPortBackend(this.portName, this.baudRate);
+
+  final String portName;
+  final int baudRate;
+  SerialPort? _port;
+
+  @override
+  void open() {
+    final port = SerialPort(portName);
+    if (!port.openReadWrite()) {
+      final msg = SerialPort.lastError?.message ?? 'Failed to open $portName';
+      port.dispose();
+      throw SerialPortError(msg);
+    }
+    try {
+      final cfg = SerialPortConfig()
+        ..baudRate = baudRate
+        ..bits = 8
+        ..parity = SerialPortParity.none
+        ..stopBits = 1
+        ..setFlowControl(SerialPortFlowControl.none)
+        ..dtr = SerialPortDtr.on
+        ..rts = SerialPortRts.on;
+      port.config = cfg;
+      port.flush(SerialPortBuffer.both);
+      _port = port;
+    } catch (e) {
+      port.close();
+      port.dispose();
+      rethrow;
+    }
+  }
+
+  @override
+  Uint8List? readAvailable() {
+    final port = _port;
+    if (port == null) return null;
+    final available = port.bytesAvailable;
+    if (available < 0) {
+      throw SerialPortError(
+        SerialPort.lastError?.message ?? 'Serial port read error',
+      );
+    }
+    if (available == 0) return null;
+    final toRead = available > 16384 ? 16384 : available;
+    return port.read(toRead, timeout: 20);
+  }
+
+  @override
+  void write(Uint8List data) {
+    final port = _port;
+    if (port == null || data.isEmpty) return;
+    port.write(data, timeout: 200);
+  }
+
+  @override
+  void close() {
+    final port = _port;
     _port = null;
+    if (port != null) {
+      try {
+        port.close();
+      } catch (_) {}
+      try {
+        port.dispose();
+      } catch (_) {}
+    }
+  }
+}
+
+/// Direct Win32 serial backend (`kernel32.dll`).
+///
+/// Bypasses `libserialport` on Windows to avoid:
+/// 1. `get_port_details` opening/closing the COM port and sending raw USB hub
+///    descriptor control transfers (`IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION`)
+///    that disrupt sibling UART interfaces on composite USB devices (such as
+///    multi-port SEGGER J-Link CDC UART bridges).
+/// 2. `WaitCommEvent` manual-reset event spin-loops (100% CPU) and unhandled
+///    isolate crashes in `SerialPortReader`.
+/// 3. Missing `DTR`/`RTS` assertion (`DTR_CONTROL_ENABLE` / `RTS_CONTROL_ENABLE`
+///    and `SETDTR`/`SETRTS`), which USB CDC-ACM bridges require before
+///    forwarding TX/RX traffic.
+/// 4. Dropped writes in `sp_nonblocking_write` when an overlapped write is
+///    still pending.
+class _Win32SerialBackend implements _SerialBackend {
+  _Win32SerialBackend(this.portName, this.baudRate);
+
+  final String portName;
+  final int baudRate;
+
+  static const int _invalidHandleValue = -1;
+  static const int _genericRead = 0x80000000;
+  static const int _genericWrite = 0x40000000;
+  static const int _openExisting = 3;
+  static const int _fileAttributeNormal = 0x00000080;
+  static const int _fileFlagOverlapped = 0x40000000;
+  static const int _lptrZeroInit = 0x0040; // LMEM_FIXED | LMEM_ZEROINIT
+  static const int _errorIoPending = 997;
+  static const int _waitObject0 = 0x00000000;
+  static const int _purgeFlags = 0x000F; // TXABORT|RXABORT|TXCLEAR|RXCLEAR
+  static const int _setRts = 3;
+  static const int _setDtr = 5;
+  static const int _ioBufferSize = 16384;
+
+  static final ffi.DynamicLibrary _kernel32 = ffi.DynamicLibrary.open(
+    'kernel32.dll',
+  );
+
+  static final _localAlloc = _kernel32
+      .lookupFunction<
+        ffi.Pointer<ffi.Void> Function(ffi.Uint32 uFlags, ffi.IntPtr uBytes),
+        ffi.Pointer<ffi.Void> Function(int uFlags, int uBytes)
+      >('LocalAlloc');
+
+  static final _localFree = _kernel32
+      .lookupFunction<
+        ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void> hMem),
+        ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void> hMem)
+      >('LocalFree');
+
+  static final _createFileW = _kernel32
+      .lookupFunction<
+        ffi.IntPtr Function(
+          ffi.Pointer<ffi.Uint16> lpFileName,
+          ffi.Uint32 dwDesiredAccess,
+          ffi.Uint32 dwShareMode,
+          ffi.Pointer<ffi.Void> lpSecurityAttributes,
+          ffi.Uint32 dwCreationDisposition,
+          ffi.Uint32 dwFlagsAndAttributes,
+          ffi.IntPtr hTemplateFile,
+        ),
+        int Function(
+          ffi.Pointer<ffi.Uint16> lpFileName,
+          int dwDesiredAccess,
+          int dwShareMode,
+          ffi.Pointer<ffi.Void> lpSecurityAttributes,
+          int dwCreationDisposition,
+          int dwFlagsAndAttributes,
+          int hTemplateFile,
+        )
+      >('CreateFileW');
+
+  static final _closeHandle = _kernel32
+      .lookupFunction<
+        ffi.Int32 Function(ffi.IntPtr hObject),
+        int Function(int hObject)
+      >('CloseHandle');
+
+  static final _getLastError = _kernel32
+      .lookupFunction<ffi.Uint32 Function(), int Function()>('GetLastError');
+
+  static final _setupComm = _kernel32
+      .lookupFunction<
+        ffi.Int32 Function(
+          ffi.IntPtr hFile,
+          ffi.Uint32 dwInQueue,
+          ffi.Uint32 dwOutQueue,
+        ),
+        int Function(int hFile, int dwInQueue, int dwOutQueue)
+      >('SetupComm');
+
+  static final _getCommState = _kernel32
+      .lookupFunction<
+        ffi.Int32 Function(ffi.IntPtr hFile, ffi.Pointer<ffi.Uint8> lpDCB),
+        int Function(int hFile, ffi.Pointer<ffi.Uint8> lpDCB)
+      >('GetCommState');
+
+  static final _setCommState = _kernel32
+      .lookupFunction<
+        ffi.Int32 Function(ffi.IntPtr hFile, ffi.Pointer<ffi.Uint8> lpDCB),
+        int Function(int hFile, ffi.Pointer<ffi.Uint8> lpDCB)
+      >('SetCommState');
+
+  static final _setCommTimeouts = _kernel32
+      .lookupFunction<
+        ffi.Int32 Function(
+          ffi.IntPtr hFile,
+          ffi.Pointer<ffi.Uint32> lpCommTimeouts,
+        ),
+        int Function(int hFile, ffi.Pointer<ffi.Uint32> lpCommTimeouts)
+      >('SetCommTimeouts');
+
+  static final _escapeCommFunction = _kernel32
+      .lookupFunction<
+        ffi.Int32 Function(ffi.IntPtr hFile, ffi.Uint32 dwFunc),
+        int Function(int hFile, int dwFunc)
+      >('EscapeCommFunction');
+
+  static final _purgeComm = _kernel32
+      .lookupFunction<
+        ffi.Int32 Function(ffi.IntPtr hFile, ffi.Uint32 dwFlags),
+        int Function(int hFile, int dwFlags)
+      >('PurgeComm');
+
+  static final _clearCommError = _kernel32
+      .lookupFunction<
+        ffi.Int32 Function(
+          ffi.IntPtr hFile,
+          ffi.Pointer<ffi.Uint32> lpErrors,
+          ffi.Pointer<ffi.Uint32> lpStat,
+        ),
+        int Function(
+          int hFile,
+          ffi.Pointer<ffi.Uint32> lpErrors,
+          ffi.Pointer<ffi.Uint32> lpStat,
+        )
+      >('ClearCommError');
+
+  static final _readFile = _kernel32
+      .lookupFunction<
+        ffi.Int32 Function(
+          ffi.IntPtr hFile,
+          ffi.Pointer<ffi.Uint8> lpBuffer,
+          ffi.Uint32 nNumberOfBytesToRead,
+          ffi.Pointer<ffi.Uint32> lpNumberOfBytesRead,
+          ffi.Pointer<ffi.Uint8> lpOverlapped,
+        ),
+        int Function(
+          int hFile,
+          ffi.Pointer<ffi.Uint8> lpBuffer,
+          int nNumberOfBytesToRead,
+          ffi.Pointer<ffi.Uint32> lpNumberOfBytesRead,
+          ffi.Pointer<ffi.Uint8> lpOverlapped,
+        )
+      >('ReadFile');
+
+  static final _writeFile = _kernel32
+      .lookupFunction<
+        ffi.Int32 Function(
+          ffi.IntPtr hFile,
+          ffi.Pointer<ffi.Uint8> lpBuffer,
+          ffi.Uint32 nNumberOfBytesToWrite,
+          ffi.Pointer<ffi.Uint32> lpNumberOfBytesWritten,
+          ffi.Pointer<ffi.Uint8> lpOverlapped,
+        ),
+        int Function(
+          int hFile,
+          ffi.Pointer<ffi.Uint8> lpBuffer,
+          int nNumberOfBytesToWrite,
+          ffi.Pointer<ffi.Uint32> lpNumberOfBytesWritten,
+          ffi.Pointer<ffi.Uint8> lpOverlapped,
+        )
+      >('WriteFile');
+
+  static final _createEventW = _kernel32
+      .lookupFunction<
+        ffi.IntPtr Function(
+          ffi.Pointer<ffi.Void> lpEventAttributes,
+          ffi.Int32 bManualReset,
+          ffi.Int32 bInitialState,
+          ffi.Pointer<ffi.Uint16> lpName,
+        ),
+        int Function(
+          ffi.Pointer<ffi.Void> lpEventAttributes,
+          int bManualReset,
+          int bInitialState,
+          ffi.Pointer<ffi.Uint16> lpName,
+        )
+      >('CreateEventW');
+
+  static final _resetEvent = _kernel32
+      .lookupFunction<
+        ffi.Int32 Function(ffi.IntPtr hEvent),
+        int Function(int hEvent)
+      >('ResetEvent');
+
+  static final _waitForSingleObject = _kernel32
+      .lookupFunction<
+        ffi.Uint32 Function(ffi.IntPtr hHandle, ffi.Uint32 dwMilliseconds),
+        int Function(int hHandle, int dwMilliseconds)
+      >('WaitForSingleObject');
+
+  static final _getOverlappedResult = _kernel32
+      .lookupFunction<
+        ffi.Int32 Function(
+          ffi.IntPtr hFile,
+          ffi.Pointer<ffi.Uint8> lpOverlapped,
+          ffi.Pointer<ffi.Uint32> lpNumberOfBytesTransferred,
+          ffi.Int32 bWait,
+        ),
+        int Function(
+          int hFile,
+          ffi.Pointer<ffi.Uint8> lpOverlapped,
+          ffi.Pointer<ffi.Uint32> lpNumberOfBytesTransferred,
+          int bWait,
+        )
+      >('GetOverlappedResult');
+
+  static final _cancelIoEx = _kernel32
+      .lookupFunction<
+        ffi.Int32 Function(
+          ffi.IntPtr hFile,
+          ffi.Pointer<ffi.Uint8> lpOverlapped,
+        ),
+        int Function(int hFile, ffi.Pointer<ffi.Uint8> lpOverlapped)
+      >('CancelIoEx');
+
+  int _hPort = _invalidHandleValue;
+  int _readEvent = 0;
+  int _writeEvent = 0;
+  ffi.Pointer<ffi.Uint8> _readOvl = ffi.nullptr;
+  ffi.Pointer<ffi.Uint8> _writeOvl = ffi.nullptr;
+  ffi.Pointer<ffi.Uint32> _errorsPtr = ffi.nullptr;
+  ffi.Pointer<ffi.Uint32> _comstatPtr = ffi.nullptr;
+  ffi.Pointer<ffi.Uint32> _bytesTransferredPtr = ffi.nullptr;
+  ffi.Pointer<ffi.Uint8> _readBuf = ffi.nullptr;
+  ffi.Pointer<ffi.Uint8> _writeBuf = ffi.nullptr;
+
+  static int get _overlappedSize => ffi.sizeOf<ffi.IntPtr>() == 8 ? 32 : 20;
+  static int get _overlappedEventOffset =>
+      ffi.sizeOf<ffi.IntPtr>() == 8 ? 24 : 16;
+
+  @override
+  void open() {
+    final normalized = portName.startsWith(r'\\.\')
+        ? portName
+        : '\\\\.\\$portName';
+    final units = normalized.codeUnits;
+    final pathPtr = _localAlloc(
+      _lptrZeroInit,
+      (units.length + 1) * 2,
+    ).cast<ffi.Uint16>();
+    try {
+      final pathList = pathPtr.asTypedList(units.length + 1);
+      for (var i = 0; i < units.length; i++) {
+        pathList[i] = units[i];
+      }
+      pathList[units.length] = 0;
+
+      _hPort = _createFileW(
+        pathPtr,
+        _genericRead | _genericWrite,
+        0,
+        ffi.nullptr,
+        _openExisting,
+        _fileAttributeNormal | _fileFlagOverlapped,
+        0,
+      );
+    } finally {
+      _localFree(pathPtr.cast());
+    }
+
+    if (_hPort == _invalidHandleValue || _hPort == 0) {
+      final err = _getLastError();
+      _hPort = _invalidHandleValue;
+      throw StateError('Failed to open $portName (Win32 error $err)');
+    }
+
+    try {
+      _setupComm(_hPort, 65536, 65536);
+
+      // Configure DCB (28 bytes)
+      final dcbPtr = _localAlloc(_lptrZeroInit, 32).cast<ffi.Uint8>();
+      try {
+        final dcbData = dcbPtr.asTypedList(28).buffer.asByteData();
+        dcbData.setUint32(0, 28, Endian.little); // DCBlength = 28
+        if (_getCommState(_hPort, dcbPtr) == 0) {
+          throw StateError(
+            'GetCommState failed on $portName (Win32 error ${_getLastError()})',
+          );
+        }
+
+        dcbData.setUint32(4, baudRate, Endian.little); // BaudRate
+
+        // DCB bitfield flags at offset 8:
+        // Enable fBinary (0x0001), DTR_CONTROL_ENABLE (0x0010), RTS_CONTROL_ENABLE (0x1000)
+        // Clear CTS/DSR/XON/XOFF flow control and error-abort bits.
+        var flags = dcbData.getUint32(8, Endian.little);
+        const clearMask =
+            0x00000002 | // fParity
+            0x00000004 | // fOutxCtsFlow
+            0x00000008 | // fOutxDsrFlow
+            0x00000030 | // fDtrControl (2 bits)
+            0x00000040 | // fDsrSensitivity
+            0x00000100 | // fOutX
+            0x00000200 | // fInX
+            0x00000400 | // fErrorChar
+            0x00000800 | // fNull
+            0x00003000 | // fRtsControl (2 bits)
+            0x00004000; // fAbortOnError
+        flags = (flags & ~clearMask) | 0x00000001 | 0x00000010 | 0x00001000;
+        dcbData.setUint32(8, flags, Endian.little);
+
+        dcbData.setUint8(18, 8); // ByteSize = 8
+        dcbData.setUint8(19, 0); // Parity = NOPARITY (0)
+        dcbData.setUint8(20, 0); // StopBits = ONESTOPBIT (0)
+
+        if (_setCommState(_hPort, dcbPtr) == 0) {
+          throw StateError(
+            'SetCommState failed on $portName (Win32 error ${_getLastError()})',
+          );
+        }
+      } finally {
+        _localFree(dcbPtr.cast());
+      }
+
+      // Explicitly assert DTR and RTS control signals for USB CDC-ACM bridges (e.g., SEGGER J-Link VCOM).
+      _escapeCommFunction(_hPort, _setDtr);
+      _escapeCommFunction(_hPort, _setRts);
+
+      // Configure COMMTIMEOUTS (20 bytes): immediate non-blocking reads, 200 ms write timeout.
+      final timeoutsPtr = _localAlloc(_lptrZeroInit, 20).cast<ffi.Uint32>();
+      try {
+        final timeouts = timeoutsPtr.asTypedList(5);
+        timeouts[0] = 0xFFFFFFFF; // ReadIntervalTimeout = MAXDWORD
+        timeouts[1] = 0; // ReadTotalTimeoutMultiplier = 0
+        timeouts[2] = 0; // ReadTotalTimeoutConstant = 0
+        timeouts[3] = 0; // WriteTotalTimeoutMultiplier = 0
+        timeouts[4] = 200; // WriteTotalTimeoutConstant = 200 ms
+        if (_setCommTimeouts(_hPort, timeoutsPtr) == 0) {
+          throw StateError(
+            'SetCommTimeouts failed on $portName (Win32 error ${_getLastError()})',
+          );
+        }
+      } finally {
+        _localFree(timeoutsPtr.cast());
+      }
+
+      _readEvent = _createEventW(ffi.nullptr, 1, 0, ffi.nullptr);
+      _writeEvent = _createEventW(ffi.nullptr, 1, 0, ffi.nullptr);
+      _readOvl = _localAlloc(_lptrZeroInit, _overlappedSize).cast<ffi.Uint8>();
+      _writeOvl = _localAlloc(_lptrZeroInit, _overlappedSize).cast<ffi.Uint8>();
+      _errorsPtr = _localAlloc(_lptrZeroInit, 4).cast<ffi.Uint32>();
+      _comstatPtr = _localAlloc(_lptrZeroInit, 12).cast<ffi.Uint32>();
+      _bytesTransferredPtr = _localAlloc(_lptrZeroInit, 4).cast<ffi.Uint32>();
+      _readBuf = _localAlloc(_lptrZeroInit, _ioBufferSize).cast<ffi.Uint8>();
+      _writeBuf = _localAlloc(_lptrZeroInit, _ioBufferSize).cast<ffi.Uint8>();
+
+      _clearCommError(_hPort, _errorsPtr, _comstatPtr);
+      _purgeComm(_hPort, _purgeFlags);
+    } catch (_) {
+      close();
+      rethrow;
+    }
+  }
+
+  void _prepareOverlapped(ffi.Pointer<ffi.Uint8> ovl, int hEvent) {
+    final bytes = ovl.asTypedList(_overlappedSize);
+    bytes.fillRange(0, _overlappedSize, 0);
+    final bd = bytes.buffer.asByteData();
+    if (ffi.sizeOf<ffi.IntPtr>() == 8) {
+      bd.setInt64(_overlappedEventOffset, hEvent, Endian.little);
+    } else {
+      bd.setInt32(_overlappedEventOffset, hEvent, Endian.little);
+    }
+    _resetEvent(hEvent);
+  }
+
+  @override
+  Uint8List? readAvailable() {
+    if (_hPort == _invalidHandleValue) return null;
+    if (_clearCommError(_hPort, _errorsPtr, _comstatPtr) == 0) {
+      throw StateError(
+        'Device disconnected on $portName (Win32 error ${_getLastError()})',
+      );
+    }
+
+    // COMSTAT.cbInQue is at DWORD index 1 (byte offset 4).
+    final cbInQue = _comstatPtr.asTypedList(3)[1];
+    if (cbInQue == 0) return null;
+
+    final toRead = cbInQue > _ioBufferSize ? _ioBufferSize : cbInQue;
+    _prepareOverlapped(_readOvl, _readEvent);
+    _bytesTransferredPtr.value = 0;
+
+    final ok = _readFile(
+      _hPort,
+      _readBuf,
+      toRead,
+      _bytesTransferredPtr,
+      _readOvl,
+    );
+    if (ok == 0) {
+      final err = _getLastError();
+      if (err == _errorIoPending) {
+        final waitRes = _waitForSingleObject(_readEvent, 50);
+        if (waitRes != _waitObject0 ||
+            _getOverlappedResult(_hPort, _readOvl, _bytesTransferredPtr, 0) ==
+                0) {
+          _cancelIoEx(_hPort, _readOvl);
+          _getOverlappedResult(_hPort, _readOvl, _bytesTransferredPtr, 1);
+          return null;
+        }
+      } else {
+        throw StateError('ReadFile failed on $portName (Win32 error $err)');
+      }
+    }
+
+    final bytesRead = _bytesTransferredPtr.value;
+    if (bytesRead <= 0) return null;
+    return Uint8List.fromList(_readBuf.asTypedList(bytesRead));
+  }
+
+  @override
+  void write(Uint8List data) {
+    if (_hPort == _invalidHandleValue || data.isEmpty) return;
+    var offset = 0;
+    while (offset < data.length) {
+      final end = (offset + _ioBufferSize < data.length)
+          ? offset + _ioBufferSize
+          : data.length;
+      final chunkLen = end - offset;
+      _writeBuf.asTypedList(chunkLen).setRange(0, chunkLen, data, offset);
+
+      _prepareOverlapped(_writeOvl, _writeEvent);
+      _bytesTransferredPtr.value = 0;
+
+      final ok = _writeFile(
+        _hPort,
+        _writeBuf,
+        chunkLen,
+        _bytesTransferredPtr,
+        _writeOvl,
+      );
+      if (ok == 0) {
+        final err = _getLastError();
+        if (err == _errorIoPending) {
+          final waitRes = _waitForSingleObject(_writeEvent, 250);
+          if (waitRes == _waitObject0) {
+            _getOverlappedResult(_hPort, _writeOvl, _bytesTransferredPtr, 0);
+          } else {
+            _cancelIoEx(_hPort, _writeOvl);
+            _getOverlappedResult(_hPort, _writeOvl, _bytesTransferredPtr, 1);
+            break;
+          }
+        } else {
+          throw StateError('WriteFile failed on $portName (Win32 error $err)');
+        }
+      }
+      offset = end;
+    }
+  }
+
+  void _freePtr(ffi.Pointer<ffi.NativeType> ptr) {
+    if (ptr != ffi.nullptr) {
+      _localFree(ptr.cast());
+    }
+  }
+
+  @override
+  void close() {
+    if (_hPort != _invalidHandleValue && _hPort != 0) {
+      _cancelIoEx(_hPort, ffi.nullptr);
+      _closeHandle(_hPort);
+      _hPort = _invalidHandleValue;
+    }
+    if (_readEvent != 0) {
+      _closeHandle(_readEvent);
+      _readEvent = 0;
+    }
+    if (_writeEvent != 0) {
+      _closeHandle(_writeEvent);
+      _writeEvent = 0;
+    }
+    _freePtr(_readOvl);
+    _readOvl = ffi.nullptr;
+    _freePtr(_writeOvl);
+    _writeOvl = ffi.nullptr;
+    _freePtr(_errorsPtr);
+    _errorsPtr = ffi.nullptr;
+    _freePtr(_comstatPtr);
+    _comstatPtr = ffi.nullptr;
+    _freePtr(_bytesTransferredPtr);
+    _bytesTransferredPtr = ffi.nullptr;
+    _freePtr(_readBuf);
+    _readBuf = ffi.nullptr;
+    _freePtr(_writeBuf);
+    _writeBuf = ffi.nullptr;
   }
 }

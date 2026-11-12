@@ -61,3 +61,7 @@ This template support UART/TERMINAL features via riverpod with custom widgets
   - add Widgets sub panel which explains shared widgets
   - add yellow/grey theme
   - store TERMINAL status to HIVE and restore
+- 2026.11.12
+  - multi serial port open issue fixed
+    - refer .agents\doc\serial_stability_patch.md
+  - SDK v0.1.0 -> v0.1.1
