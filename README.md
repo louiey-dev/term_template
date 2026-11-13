@@ -65,3 +65,11 @@ This template support UART/TERMINAL features via riverpod with custom widgets
   - multi serial port open issue fixed
     - refer .agents\doc\serial_stability_patch.md
   - SDK v0.1.0 -> v0.1.1
+- 2026.11.13
+  - optimize code
+  - add
+    - COM Port Persistence per Pane
+    - Full Serial Framing & Flow Control option
+    - Configurable Windows PTY Shell
+    - Terminal Search & Scrollback Export
+  - v0.1.1 -> v0.2.0

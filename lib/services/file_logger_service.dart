@@ -142,7 +142,7 @@ class FileLoggerNotifier extends Notifier<FileLoggerState> {
   String _sanitize(String data) => data
       .replaceAll('\r', '')
       .replaceAll(_controlChars, '')
-      .replaceAll('', '');
+      .replaceAll('\uFFFD', '');
 
   void _write(String data) {
     if (!state.timestampEnabled) {

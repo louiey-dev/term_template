@@ -39,6 +39,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
             path: '/home/panel/:panelId',
             builder: (ctx, state) {
               final id = state.pathParameters['panelId']!;
+              if (isPanelHidden(id)) return NotFoundPanel(panelId: id);
               return panelRegistry[id]?.call() ?? NotFoundPanel(panelId: id);
             },
           ),

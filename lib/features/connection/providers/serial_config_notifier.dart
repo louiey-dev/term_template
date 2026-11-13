@@ -15,7 +15,10 @@ final availablePortsNotifierProvider =
 /// Notifier that scans and lists active hardware serial ports.
 class AvailablePortsNotifier extends Notifier<List<String>> {
   @override
-  List<String> build() => [];
+  List<String> build() {
+    Future.microtask(scan);
+    return [];
+  }
 
   /// Scans for available serial ports and updates state.
   Future<void> scan() async {

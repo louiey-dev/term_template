@@ -218,21 +218,9 @@ class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
     }
     try {
       final map = jsonDecode(raw) as Map<String, dynamic>;
-      final baud = (map['baudRate'] as num?)?.toInt() ?? fallbackBaud;
-      final encName = map['encoding']?.toString();
-      final nlName = map['newLine']?.toString();
-      final encoding = SerialEncoding.values.firstWhere(
-        (e) => e.name == encName,
-        orElse: () => SerialEncoding.utf8,
-      );
-      final newLine = NewLine.values.firstWhere(
-        (n) => n.name == nlName,
-        orElse: () => NewLine.none,
-      );
-      return SerialConfig(
-        baudRate: baud > 0 ? baud : fallbackBaud,
-        encoding: encoding,
-        newLine: newLine,
+      final loaded = SerialConfig.fromJson(map);
+      return loaded.copyWith(
+        baudRate: loaded.baudRate > 0 ? loaded.baudRate : fallbackBaud,
       );
     } catch (_) {
       return SerialConfig(baudRate: fallbackBaud);
@@ -243,11 +231,7 @@ class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
     if (!Hive.isBoxOpen(_boxName)) return;
     Hive.box<String>(_boxName).put(
       '$_paneConfigPrefix$arg',
-      jsonEncode({
-        'baudRate': cfg.baudRate,
-        'encoding': cfg.encoding.name,
-        'newLine': cfg.newLine.name,
-      }),
+      jsonEncode(cfg.toJson()),
     );
   }
 
@@ -275,8 +259,11 @@ class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
     );
   }
 
-  void setPort(String port) =>
-      state = state.copyWith(config: state.config.copyWith(port: port));
+  void setPort(String port) {
+    final updated = state.config.copyWith(port: port);
+    state = state.copyWith(config: updated);
+    _savePaneConfig(updated);
+  }
 
   void setBaudRate(int baud) {
     final updated = state.config.copyWith(baudRate: baud);
@@ -289,6 +276,30 @@ class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
     if (Hive.isBoxOpen(_boxName)) {
       Hive.box<String>(_boxName).put(_baudRateKey, baud.toString());
     }
+  }
+
+  void setDataBits(int dataBits) {
+    final updated = state.config.copyWith(dataBits: dataBits);
+    state = state.copyWith(config: updated);
+    _savePaneConfig(updated);
+  }
+
+  void setParity(SerialParity parity) {
+    final updated = state.config.copyWith(parity: parity);
+    state = state.copyWith(config: updated);
+    _savePaneConfig(updated);
+  }
+
+  void setStopBits(SerialStopBits stopBits) {
+    final updated = state.config.copyWith(stopBits: stopBits);
+    state = state.copyWith(config: updated);
+    _savePaneConfig(updated);
+  }
+
+  void setFlowControl(SerialFlowControl flowControl) {
+    final updated = state.config.copyWith(flowControl: flowControl);
+    state = state.copyWith(config: updated);
+    _savePaneConfig(updated);
   }
 
   void setEncoding(SerialEncoding enc) {
@@ -316,8 +327,8 @@ class SerialPaneNotifier extends FamilyNotifier<SerialPaneState, String> {
 
     try {
       final backend = Platform.isWindows
-          ? _Win32SerialBackend(cfg.port, cfg.baudRate)
-          : _LibSerialPortBackend(cfg.port, cfg.baudRate);
+          ? _Win32SerialBackend(cfg, onAsyncError: _handleFatalError)
+          : _LibSerialPortBackend(cfg);
       backend.open();
       _backend = backend;
 
@@ -427,11 +438,12 @@ abstract class _SerialBackend {
 /// Cross-platform fallback serial backend using `flutter_libserialport` without
 /// its broken `SerialPortReader` isolate.
 class _LibSerialPortBackend implements _SerialBackend {
-  _LibSerialPortBackend(this.portName, this.baudRate);
+  _LibSerialPortBackend(this.config);
 
-  final String portName;
-  final int baudRate;
+  final SerialConfig config;
   SerialPort? _port;
+
+  String get portName => config.port;
 
   @override
   void open() {
@@ -442,12 +454,24 @@ class _LibSerialPortBackend implements _SerialBackend {
       throw SerialPortError(msg);
     }
     try {
+      final parity = switch (config.parity) {
+        SerialParity.none => SerialPortParity.none,
+        SerialParity.odd => SerialPortParity.odd,
+        SerialParity.even => SerialPortParity.even,
+        SerialParity.mark => SerialPortParity.mark,
+        SerialParity.space => SerialPortParity.space,
+      };
+      final flow = switch (config.flowControl) {
+        SerialFlowControl.none => SerialPortFlowControl.none,
+        SerialFlowControl.rtsCts => SerialPortFlowControl.rtsCts,
+        SerialFlowControl.xonXoff => SerialPortFlowControl.xonXoff,
+      };
       final cfg = SerialPortConfig()
-        ..baudRate = baudRate
-        ..bits = 8
-        ..parity = SerialPortParity.none
-        ..stopBits = 1
-        ..setFlowControl(SerialPortFlowControl.none)
+        ..baudRate = config.baudRate
+        ..bits = config.dataBits
+        ..parity = parity
+        ..stopBits = config.stopBits.libserialportValue
+        ..setFlowControl(flow)
         ..dtr = SerialPortDtr.on
         ..rts = SerialPortRts.on;
       port.config = cfg;
@@ -512,10 +536,13 @@ class _LibSerialPortBackend implements _SerialBackend {
 /// 4. Dropped writes in `sp_nonblocking_write` when an overlapped write is
 ///    still pending.
 class _Win32SerialBackend implements _SerialBackend {
-  _Win32SerialBackend(this.portName, this.baudRate);
+  _Win32SerialBackend(this.config, {this.onAsyncError});
 
-  final String portName;
-  final int baudRate;
+  final SerialConfig config;
+  final void Function(Object error)? onAsyncError;
+
+  String get portName => config.port;
+  int get baudRate => config.baudRate;
 
   static const int _invalidHandleValue = -1;
   static const int _genericRead = 0x80000000;
@@ -732,8 +759,11 @@ class _Win32SerialBackend implements _SerialBackend {
   ffi.Pointer<ffi.Uint32> _errorsPtr = ffi.nullptr;
   ffi.Pointer<ffi.Uint32> _comstatPtr = ffi.nullptr;
   ffi.Pointer<ffi.Uint32> _bytesTransferredPtr = ffi.nullptr;
+  ffi.Pointer<ffi.Uint32> _writeBytesTransferredPtr = ffi.nullptr;
   ffi.Pointer<ffi.Uint8> _readBuf = ffi.nullptr;
   ffi.Pointer<ffi.Uint8> _writeBuf = ffi.nullptr;
+  final List<Uint8List> _writeQueue = [];
+  bool _drainingWrites = false;
 
   static int get _overlappedSize => ffi.sizeOf<ffi.IntPtr>() == 8 ? 32 : 20;
   static int get _overlappedEventOffset =>
@@ -825,8 +855,7 @@ class _Win32SerialBackend implements _SerialBackend {
         dcbData.setUint32(4, baudRate, Endian.little); // BaudRate
 
         // DCB bitfield flags at offset 8:
-        // Enable fBinary (0x0001), DTR_CONTROL_ENABLE (0x0010), RTS_CONTROL_ENABLE (0x1000)
-        // Clear CTS/DSR/XON/XOFF flow control and error-abort bits.
+        // Enable fBinary (0x0001), DTR_CONTROL_ENABLE (0x0010), and configured flow control.
         var flags = dcbData.getUint32(8, Endian.little);
         const clearMask =
             0x00000002 | // fParity
@@ -840,12 +869,24 @@ class _Win32SerialBackend implements _SerialBackend {
             0x00000800 | // fNull
             0x00003000 | // fRtsControl (2 bits)
             0x00004000; // fAbortOnError
-        flags = (flags & ~clearMask) | 0x00000001 | 0x00000010 | 0x00001000;
+        var setMask = 0x00000001 | 0x00000010; // fBinary | DTR_CONTROL_ENABLE
+        if (config.parity != SerialParity.none) {
+          setMask |= 0x00000002; // fParity
+        }
+        switch (config.flowControl) {
+          case SerialFlowControl.none:
+            setMask |= 0x00001000; // RTS_CONTROL_ENABLE
+          case SerialFlowControl.rtsCts:
+            setMask |= 0x00000004 | 0x00002000; // fOutxCtsFlow | RTS_CONTROL_HANDSHAKE
+          case SerialFlowControl.xonXoff:
+            setMask |= 0x00001000 | 0x00000100 | 0x00000200; // RTS_ENABLE | fOutX | fInX
+        }
+        flags = (flags & ~clearMask) | setMask;
         dcbData.setUint32(8, flags, Endian.little);
 
-        dcbData.setUint8(18, 8); // ByteSize = 8
-        dcbData.setUint8(19, 0); // Parity = NOPARITY (0)
-        dcbData.setUint8(20, 0); // StopBits = ONESTOPBIT (0)
+        dcbData.setUint8(18, config.dataBits); // ByteSize
+        dcbData.setUint8(19, config.parity.win32Value); // Parity
+        dcbData.setUint8(20, config.stopBits.win32Value); // StopBits
 
         if (_setCommState(_hPort, dcbPtr) == 0) {
           throw StateError(
@@ -885,6 +926,7 @@ class _Win32SerialBackend implements _SerialBackend {
       _errorsPtr = _localAlloc(_lptrZeroInit, 4).cast<ffi.Uint32>();
       _comstatPtr = _localAlloc(_lptrZeroInit, 12).cast<ffi.Uint32>();
       _bytesTransferredPtr = _localAlloc(_lptrZeroInit, 4).cast<ffi.Uint32>();
+      _writeBytesTransferredPtr = _localAlloc(_lptrZeroInit, 4).cast<ffi.Uint32>();
       _readBuf = _localAlloc(_lptrZeroInit, _ioBufferSize).cast<ffi.Uint8>();
       _writeBuf = _localAlloc(_lptrZeroInit, _ioBufferSize).cast<ffi.Uint8>();
 
@@ -956,51 +998,89 @@ class _Win32SerialBackend implements _SerialBackend {
   @override
   void write(Uint8List data) {
     if (_hPort == _invalidHandleValue || data.isEmpty) return;
-    var offset = 0;
-    while (offset < data.length) {
-      final end = (offset + _ioBufferSize < data.length)
-          ? offset + _ioBufferSize
-          : data.length;
-      final chunkLen = end - offset;
-      _writeBuf.asTypedList(chunkLen).setRange(0, chunkLen, data, offset);
+    _writeQueue.add(Uint8List.fromList(data));
+    if (!_drainingWrites) {
+      unawaited(_drainWriteQueue());
+    }
+  }
 
-      _prepareOverlapped(_writeOvl, _writeEvent);
-      _bytesTransferredPtr.value = 0;
+  Future<void> _drainWriteQueue() async {
+    if (_drainingWrites) return;
+    _drainingWrites = true;
+    try {
+      while (_writeQueue.isNotEmpty && _hPort != _invalidHandleValue) {
+        final data = _writeQueue.removeAt(0);
+        var offset = 0;
+        while (offset < data.length && _hPort != _invalidHandleValue) {
+          final end = (offset + _ioBufferSize < data.length)
+              ? offset + _ioBufferSize
+              : data.length;
+          final chunkLen = end - offset;
+          _writeBuf.asTypedList(chunkLen).setRange(0, chunkLen, data, offset);
 
-      final ok = _writeFile(
-        _hPort,
-        _writeBuf,
-        chunkLen,
-        _bytesTransferredPtr,
-        _writeOvl,
-      );
-      if (ok == 0) {
-        final err = _getLastError();
-        if (err == _errorIoPending || err == 0) {
-          final waitRes = _waitForSingleObject(_writeEvent, 250);
-          if (waitRes == _waitObject0) {
-            if (_getOverlappedResult(
+          _prepareOverlapped(_writeOvl, _writeEvent);
+          _writeBytesTransferredPtr.value = 0;
+
+          final ok = _writeFile(
+            _hPort,
+            _writeBuf,
+            chunkLen,
+            _writeBytesTransferredPtr,
+            _writeOvl,
+          );
+          if (ok == 0) {
+            final err = _getLastError();
+            if (err == _errorIoPending || err == 0) {
+              // Poll overlapped completion asynchronously so large writes do not block the UI thread.
+              final deadline = DateTime.now().add(
+                const Duration(milliseconds: 250),
+              );
+              var completed = false;
+              while (_hPort != _invalidHandleValue) {
+                if (_waitForSingleObject(_writeEvent, 0) == _waitObject0) {
+                  if (_getOverlappedResult(
+                        _hPort,
+                        _writeOvl,
+                        _writeBytesTransferredPtr,
+                        0,
+                      ) ==
+                      0) {
+                    final ovlErr = _getLastError();
+                    throw StateError(
+                      'WriteFile failed on $portName (Win32 error $ovlErr)',
+                    );
+                  }
+                  completed = true;
+                  break;
+                }
+                if (DateTime.now().isAfter(deadline)) break;
+                await Future<void>.delayed(const Duration(milliseconds: 1));
+              }
+              if (!completed) {
+                if (_hPort == _invalidHandleValue) return;
+                _cancelIoEx(_hPort, _writeOvl);
+                _getOverlappedResult(
                   _hPort,
                   _writeOvl,
-                  _bytesTransferredPtr,
-                  0,
-                ) ==
-                0) {
-              final ovlErr = _getLastError();
+                  _writeBytesTransferredPtr,
+                  1,
+                );
+                throw TimeoutException('WriteFile timed out on $portName');
+              }
+            } else {
               throw StateError(
-                'WriteFile failed on $portName (Win32 error $ovlErr)',
+                'WriteFile failed on $portName (Win32 error $err)',
               );
             }
-          } else {
-            _cancelIoEx(_hPort, _writeOvl);
-            _getOverlappedResult(_hPort, _writeOvl, _bytesTransferredPtr, 1);
-            break;
           }
-        } else {
-          throw StateError('WriteFile failed on $portName (Win32 error $err)');
+          offset = end;
         }
       }
-      offset = end;
+    } catch (e) {
+      _writeQueue.clear();
+      onAsyncError?.call(e);
+    } finally {
+      _drainingWrites = false;
     }
   }
 
@@ -1035,6 +1115,9 @@ class _Win32SerialBackend implements _SerialBackend {
     _comstatPtr = ffi.nullptr;
     _freePtr(_bytesTransferredPtr);
     _bytesTransferredPtr = ffi.nullptr;
+    _freePtr(_writeBytesTransferredPtr);
+    _writeBytesTransferredPtr = ffi.nullptr;
+    _writeQueue.clear();
     _freePtr(_readBuf);
     _readBuf = ffi.nullptr;
     _freePtr(_writeBuf);

@@ -16,6 +16,45 @@ const _mainPanelFoldedKey = 'main_panel_folded';
 const _mainFlexKey = 'terminal_main_flex';
 const _logFlexKey = 'terminal_log_flex';
 const _paneFlexesKey = 'terminal_pane_flexes';
+const _ptyShellKey = 'terminal_pty_shell';
+
+/// Supported Windows PTY shells.
+enum PtyShellType {
+  cmd('cmd.exe', 'cmd.exe', ['/k', 'chcp', '65001']),
+  powershell('PowerShell', 'powershell.exe', ['-NoLogo']),
+  pwsh('PowerShell 7', 'pwsh.exe', ['-NoLogo']);
+
+  const PtyShellType(this.label, this.executable, this.arguments);
+
+  final String label;
+  final String executable;
+  final List<String> arguments;
+}
+
+/// Global provider for the preferred Windows PTY shell.
+final ptyShellProvider = NotifierProvider<PtyShellNotifier, PtyShellType>(
+  PtyShellNotifier.new,
+);
+
+/// Manages and persists the selected Windows PTY shell in Hive.
+class PtyShellNotifier extends Notifier<PtyShellType> {
+  @override
+  PtyShellType build() {
+    if (!Hive.isBoxOpen(_boxName)) return PtyShellType.cmd;
+    final raw = Hive.box<String>(_boxName).get(_ptyShellKey);
+    return PtyShellType.values.firstWhere(
+      (s) => s.name == raw,
+      orElse: () => PtyShellType.cmd,
+    );
+  }
+
+  void setShell(PtyShellType shell) {
+    state = shell;
+    if (Hive.isBoxOpen(_boxName)) {
+      Hive.box<String>(_boxName).put(_ptyShellKey, shell.name);
+    }
+  }
+}
 
 bool _readBool(String key, {bool defaultValue = false}) {
   if (!Hive.isBoxOpen(_boxName)) return defaultValue;

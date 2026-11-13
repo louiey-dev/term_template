@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_pty/flutter_pty.dart';
@@ -11,6 +12,7 @@ import 'package:xterm/xterm.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../services/file_logger_service.dart';
+import '../../../shared/my_utils.dart';
 import '../../connection/providers/board_console.dart';
 import '../../connection/providers/serial_pane_provider.dart';
 import '../../panels/common/board_command.dart';
@@ -106,9 +108,10 @@ class _LogPanelState extends ConsumerState<LogPanel> {
   void _onTabsChanged(List<TerminalTab>? prev, List<TerminalTab> next) {
     if (!mounted) return;
     if (prev != null) {
-      final removed = prev.map((t) => t.id).toSet()
-        ..removeAll(next.map((t) => t.id));
-      for (final id in removed) {
+      final nextIds = next.map((t) => t.id).toSet();
+      final removedTabs = prev.where((t) => !nextIds.contains(t.id)).toList();
+      for (final tab in removedTabs) {
+        final id = tab.id;
         _ptys[id]?.kill();
         _ptys.remove(id);
         _consoles[id]?.markClosed();
@@ -116,7 +119,15 @@ class _LogPanelState extends ConsumerState<LogPanel> {
         _registry.unregister(id);
         _ptyStarted.remove(id);
         _ptyResizeDebouncers.remove(id)?.cancel();
+        if (tab.type == TerminalTabType.serial) {
+          ref.read(serialPaneNotifierProvider(id).notifier).disconnect();
+          ref.invalidate(serialPaneNotifierProvider(id));
+        }
         SerialPaneNotifier.deletePersistedConfig(id);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          tab.controller.dispose();
+          tab.focusNode.dispose();
+        });
       }
     }
     _syncAreas(next);
@@ -177,11 +188,11 @@ class _LogPanelState extends ConsumerState<LogPanel> {
   }
 
   String get _shell => Platform.isWindows
-      ? 'cmd.exe'
+      ? ref.read(ptyShellProvider).executable
       : (Platform.environment['SHELL'] ?? 'bash');
 
   List<String> get _shellArgs =>
-      Platform.isWindows ? ['/k', 'chcp', '65001'] : [];
+      Platform.isWindows ? ref.read(ptyShellProvider).arguments : [];
 
   TerminalTab? _findTab(List<TerminalTab> tabs, Object? id) {
     for (final t in tabs) {
@@ -281,7 +292,7 @@ class _LogPanelState extends ConsumerState<LogPanel> {
   }
 }
 
-class _TerminalPane extends ConsumerWidget {
+class _TerminalPane extends ConsumerStatefulWidget {
   const _TerminalPane({
     required this.tab,
     required this.canClose,
@@ -297,8 +308,141 @@ class _TerminalPane extends ConsumerWidget {
   final VoidCallback onClose;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_TerminalPane> createState() => _TerminalPaneState();
+}
+
+class _TerminalPaneState extends ConsumerState<_TerminalPane> {
+  bool _showSearch = false;
+  final TextEditingController _searchCtrl = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+  final List<TerminalHighlight> _highlights = [];
+  List<({int y, int start, int end})> _matches = const [];
+  int _matchIdx = -1;
+
+  @override
+  void dispose() {
+    _clearHighlights();
+    _searchCtrl.dispose();
+    _searchFocus.dispose();
+    super.dispose();
+  }
+
+  void _clearHighlights() {
+    for (final h in _highlights) {
+      h.dispose();
+    }
+    _highlights.clear();
+    _matches = const [];
+    _matchIdx = -1;
+  }
+
+  void _toggleSearch() {
+    setState(() {
+      _showSearch = !_showSearch;
+      if (_showSearch) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _searchFocus.requestFocus();
+        });
+      } else {
+        _clearHighlights();
+        widget.tab.controller.clearSelection();
+        widget.tab.focusNode.requestFocus();
+      }
+    });
+  }
+
+  void _runSearch(String query, AppColors c) {
+    _clearHighlights();
+    final q = query.toLowerCase();
+    if (q.isEmpty) {
+      setState(() {});
+      return;
+    }
+    final buf = widget.tab.terminal.buffer;
+    final found = <({int y, int start, int end})>[];
+    for (var y = 0; y < buf.lines.length; y++) {
+      final lineText = buf.lines[y].getText().toLowerCase();
+      var start = 0;
+      while (true) {
+        final idx = lineText.indexOf(q, start);
+        if (idx == -1) break;
+        found.add((y: y, start: idx, end: idx + q.length));
+        start = idx + q.length;
+      }
+    }
+    for (var i = 0; i < found.length; i++) {
+      final m = found[i];
+      final line = buf.lines[m.y];
+      _highlights.add(
+        widget.tab.controller.highlight(
+          p1: line.createAnchor(m.start),
+          p2: line.createAnchor(m.end),
+          color: c.warning.withValues(alpha: 0.45),
+        ),
+      );
+    }
+    setState(() {
+      _matches = found;
+      _matchIdx = found.isEmpty ? -1 : found.length - 1;
+    });
+    if (_matchIdx >= 0) _selectCurrentMatch();
+  }
+
+  void _stepMatch(int delta) {
+    if (_matches.isEmpty) return;
+    setState(() {
+      _matchIdx = (_matchIdx + delta) % _matches.length;
+      if (_matchIdx < 0) _matchIdx += _matches.length;
+    });
+    _selectCurrentMatch();
+  }
+
+  void _selectCurrentMatch() {
+    if (_matchIdx < 0 || _matchIdx >= _matches.length) return;
+    final m = _matches[_matchIdx];
+    final buf = widget.tab.terminal.buffer;
+    if (m.y >= buf.lines.length) return;
+    final line = buf.lines[m.y];
+    widget.tab.controller.setSelection(
+      line.createAnchor(m.start),
+      line.createAnchor(m.end),
+    );
+  }
+
+  Future<void> _exportScrollback() async {
+    final buf = widget.tab.terminal.buffer;
+    final lines = <String>[
+      for (var i = 0; i < buf.lines.length; i++) buf.lines[i].getText().trimRight(),
+    ];
+    while (lines.isNotEmpty && lines.last.isEmpty) {
+      lines.removeLast();
+    }
+    final content = lines.join('\n');
+    final defaultName =
+        '${widget.tab.label.toLowerCase().replaceAll(' ', '_')}_scrollback.txt';
+    final path = await FilePicker.saveFile(
+      dialogTitle: 'Export Terminal Scrollback',
+      fileName: defaultName,
+      type: FileType.custom,
+      allowedExtensions: const ['txt', 'log'],
+    );
+    if (path == null) return;
+    try {
+      await File(path).writeAsString(content);
+      if (mounted) {
+        m.showSnackbar(context, 'Exported scrollback to $path');
+      }
+    } catch (e) {
+      if (mounted) {
+        m.showErrorSnackbar(context, 'Export failed: $e');
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final c = context.colors;
+    final tab = widget.tab;
     final isSerial = tab.type == TerminalTabType.serial;
     final icon = isSerial ? Icons.usb_outlined : Icons.terminal;
 
@@ -310,8 +454,8 @@ class _TerminalPane extends ConsumerWidget {
       port = state.config.port;
     }
 
-    final headerColor = isActive ? c.surface : c.sidebar;
-    final labelColor = isActive ? c.primary : c.foreground;
+    final headerColor = widget.isActive ? c.surface : c.sidebar;
+    final labelColor = widget.isActive ? c.primary : c.foreground;
 
     final header = Container(
       height: 28,
@@ -320,8 +464,8 @@ class _TerminalPane extends ConsumerWidget {
         color: headerColor,
         border: Border(
           bottom: BorderSide(
-            color: isActive ? c.primary : c.border,
-            width: isActive ? 1.5 : 1,
+            color: widget.isActive ? c.primary : c.border,
+            width: widget.isActive ? 1.5 : 1,
           ),
         ),
       ),
@@ -380,21 +524,34 @@ class _TerminalPane extends ConsumerWidget {
                     ],
                     const Spacer(),
                     _MiniBtn(
+                      icon: Icons.search,
+                      tooltip: 'Search (Ctrl+F)',
+                      color: _showSearch ? c.primary : c.muted,
+                      onTap: _toggleSearch,
+                    ),
+                    _MiniBtn(
+                      icon: Icons.download_outlined,
+                      tooltip: 'Export scrollback',
+                      color: c.muted,
+                      onTap: _exportScrollback,
+                    ),
+                    _MiniBtn(
                       icon: Icons.delete_outline,
                       tooltip: 'Clear',
                       color: c.muted,
                       onTap: () {
+                        _clearHighlights();
                         tab.terminal.buffer.clear();
                         tab.terminal.buffer.setCursor(0, 0);
                         tab.controller.clearSelection();
                       },
                     ),
-                    if (canClose)
+                    if (widget.canClose)
                       _MiniBtn(
                         icon: Icons.close,
                         tooltip: 'Close',
                         color: c.muted,
-                        onTap: onClose,
+                        onTap: widget.onClose,
                       ),
                   ],
                 ),
@@ -405,45 +562,117 @@ class _TerminalPane extends ConsumerWidget {
       ),
     );
 
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: (_) => onActivate?.call(),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final maxH = constraints.maxHeight;
-          if (maxH <= 0) return const SizedBox.shrink();
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyF, control: true):
+            _toggleSearch,
+      },
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => widget.onActivate?.call(),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final maxH = constraints.maxHeight;
+            if (maxH <= 0) return const SizedBox.shrink();
 
-          if (maxH <= 28) {
+            if (maxH <= 28) {
+              return ClipRect(
+                child: SizedBox(height: maxH, child: header),
+              );
+            }
             return ClipRect(
-              child: SizedBox(height: maxH, child: header),
-            );
-          }
-          return ClipRect(
-            child: Column(
-              children: [
-                header,
-                // Terminal View
-                Expanded(
-                  child: ClipRect(
-                    child: TerminalView(
-                      tab.terminal,
-                      controller: tab.controller,
-                      focusNode: tab.focusNode,
-                      theme: buildTerminalTheme(
-                        c,
-                        Theme.of(context).brightness,
+              child: Column(
+                children: [
+                  header,
+                  if (_showSearch && maxH > 64)
+                    Container(
+                      height: 30,
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                      decoration: BoxDecoration(
+                        color: c.sidebar,
+                        border: Border(bottom: BorderSide(color: c.border)),
                       ),
-                      backgroundOpacity: 0.0,
-                      padding: const EdgeInsets.all(8),
-                      onSecondaryTapDown: (d, o) => _handleRightClick(tab),
-                      hardwareKeyboardOnly: true,
+                      child: Row(
+                        children: [
+                          Icon(Icons.search, size: 13, color: c.muted),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: TextField(
+                              controller: _searchCtrl,
+                              focusNode: _searchFocus,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontFamily: 'Consolas',
+                                color: c.foreground,
+                              ),
+                              decoration: InputDecoration(
+                                hintText: 'Find in scrollback...',
+                                hintStyle: TextStyle(
+                                  fontSize: 11,
+                                  color: c.muted,
+                                ),
+                                border: InputBorder.none,
+                                isDense: true,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                              onChanged: (v) => _runSearch(v, c),
+                              onSubmitted: (_) => _stepMatch(1),
+                            ),
+                          ),
+                          Text(
+                            _matches.isEmpty
+                                ? '0/0'
+                                : '${_matchIdx + 1}/${_matches.length}',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontFamily: 'Consolas',
+                              color: c.muted,
+                            ),
+                          ),
+                          _MiniBtn(
+                            icon: Icons.keyboard_arrow_up,
+                            tooltip: 'Previous match',
+                            color: c.muted,
+                            onTap: () => _stepMatch(-1),
+                          ),
+                          _MiniBtn(
+                            icon: Icons.keyboard_arrow_down,
+                            tooltip: 'Next match',
+                            color: c.muted,
+                            onTap: () => _stepMatch(1),
+                          ),
+                          _MiniBtn(
+                            icon: Icons.close,
+                            tooltip: 'Close search',
+                            color: c.muted,
+                            onTap: _toggleSearch,
+                          ),
+                        ],
+                      ),
+                    ),
+                  // Terminal View
+                  Expanded(
+                    child: ClipRect(
+                      child: TerminalView(
+                        tab.terminal,
+                        controller: tab.controller,
+                        focusNode: tab.focusNode,
+                        theme: buildTerminalTheme(
+                          c,
+                          Theme.of(context).brightness,
+                        ),
+                        backgroundOpacity: 0.0,
+                        padding: const EdgeInsets.all(8),
+                        onSecondaryTapDown: (d, o) => _handleRightClick(tab),
+                        hardwareKeyboardOnly: true,
+                      ),
                     ),
                   ),
-                ),
-              ],
-            ),
-          );
-        },
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -491,17 +720,12 @@ class _Toolbar extends ConsumerWidget {
           const minToolbarW = 900.0;
           final effectiveW = maxW < minToolbarW ? minToolbarW : maxW;
 
-          return ClipRect(
-            child: OverflowBox(
-              alignment: Alignment.centerLeft,
-              minWidth: effectiveW,
-              maxWidth: effectiveW,
-              minHeight: 32,
-              maxHeight: 32,
-              child: SizedBox(
-                width: effectiveW,
-                height: 32,
-                child: Row(
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: effectiveW,
+              height: 32,
+              child: Row(
                   children: [
                     // Vertical Fold / Unfold Toggle
                     _MiniBtn(
@@ -644,8 +868,7 @@ class _Toolbar extends ConsumerWidget {
                   ],
                 ),
               ),
-            ),
-          );
+            );
         },
       ),
     );

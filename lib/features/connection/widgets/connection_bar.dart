@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,7 +18,7 @@ const int _customBaudRateValue = -1;
 /// Indicates whether the top [ConnectionBar] is folded/collapsed vertically.
 final connectionBarFoldedProvider = StateProvider<bool>((ref) => false);
 
-enum _AppMenuAction { comSettings, about }
+enum _AppMenuAction { comSettings, ptyShell, about }
 
 enum _BarSlot { left, right }
 
@@ -146,7 +148,9 @@ class ConnectionBar extends ConsumerWidget {
                   // COM port list
                   buildDropdown<String>(
                     context,
-                    value: config.port.isEmpty ? null : config.port,
+                    value: config.port.isNotEmpty && ports.contains(config.port)
+                        ? config.port
+                        : null,
                     hint: 'Port',
                     items: ports
                         .map(
@@ -381,6 +385,11 @@ class _AppMenuButton extends StatelessWidget {
                 builder: (_) => _ComSettingsDialog(tabId: id),
               );
             }
+          case _AppMenuAction.ptyShell:
+            showDialog<void>(
+              context: context,
+              builder: (_) => const _PtyShellDialog(),
+            );
           case _AppMenuAction.about:
             showDialog<void>(
               context: context,
@@ -411,6 +420,21 @@ class _AppMenuButton extends StatelessWidget {
             ],
           ),
         ),
+        if (Platform.isWindows)
+          PopupMenuItem<_AppMenuAction>(
+            value: _AppMenuAction.ptyShell,
+            height: 40,
+            child: Row(
+              children: [
+                Icon(Icons.terminal, size: 16, color: c.foreground),
+                const SizedBox(width: 10),
+                Text(
+                  'PTY shell',
+                  style: TextStyle(fontSize: 13, color: c.foreground),
+                ),
+              ],
+            ),
+          ),
         PopupMenuItem<_AppMenuAction>(
           value: _AppMenuAction.about,
           height: 40,
@@ -459,34 +483,132 @@ class _ComSettingsDialog extends ConsumerWidget {
           ),
         ],
       ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (locked)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  'Disconnect to change settings.',
+                  style: TextStyle(fontSize: 11, color: c.warning),
+                ),
+              ),
+            const _DialogSectionLabel('Data Bits'),
+            Wrap(
+              spacing: 6,
+              children: [
+                for (final bits in const [5, 6, 7, 8])
+                  ChoiceChip(
+                    label: Text('$bits'),
+                    selected: config.dataBits == bits,
+                    onSelected: locked
+                        ? null
+                        : (_) => notifier.setDataBits(bits),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            const _DialogSectionLabel('Parity'),
+            for (final p in SerialParity.values)
+              _DialogCheckRow(
+                label: p.label,
+                selected: config.parity == p,
+                enabled: !locked,
+                onTap: () => notifier.setParity(p),
+              ),
+            const SizedBox(height: 8),
+            const _DialogSectionLabel('Stop Bits'),
+            Wrap(
+              spacing: 6,
+              children: [
+                for (final sb in SerialStopBits.values)
+                  ChoiceChip(
+                    label: Text(sb.label),
+                    selected: config.stopBits == sb,
+                    onSelected: locked
+                        ? null
+                        : (_) => notifier.setStopBits(sb),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            const _DialogSectionLabel('Flow Control'),
+            for (final fc in SerialFlowControl.values)
+              _DialogCheckRow(
+                label: fc.label,
+                selected: config.flowControl == fc,
+                enabled: !locked,
+                onTap: () => notifier.setFlowControl(fc),
+              ),
+            const SizedBox(height: 8),
+            const _DialogSectionLabel('Encoding'),
+            for (final e in SerialEncoding.values)
+              _DialogCheckRow(
+                label: e.label,
+                selected: config.encoding == e,
+                enabled: !locked,
+                onTap: () => notifier.setEncoding(e),
+              ),
+            const SizedBox(height: 8),
+            const _DialogSectionLabel('New Line'),
+            for (final n in NewLine.values)
+              _DialogCheckRow(
+                label: n.label,
+                selected: config.newLine == n,
+                enabled: !locked,
+                onTap: () => notifier.setNewLine(n),
+              ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text('Close', style: TextStyle(color: c.primary)),
+        ),
+      ],
+    );
+  }
+}
+
+class _PtyShellDialog extends ConsumerWidget {
+  const _PtyShellDialog();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final c = context.colors;
+    final current = ref.watch(ptyShellProvider);
+    final notifier = ref.read(ptyShellProvider.notifier);
+
+    return AlertDialog(
+      backgroundColor: c.card,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: c.border),
+      ),
+      title: Row(
+        children: [
+          Icon(Icons.terminal, size: 18, color: c.primary),
+          const SizedBox(width: 8),
+          Text(
+            'PTY Shell (New Panes)',
+            style: TextStyle(fontSize: 15, color: c.foreground),
+          ),
+        ],
+      ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (locked)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text(
-                'Disconnect to change settings.',
-                style: TextStyle(fontSize: 11, color: c.warning),
-              ),
-            ),
-          _DialogSectionLabel('Encoding'),
-          for (final e in SerialEncoding.values)
+          for (final shell in PtyShellType.values)
             _DialogCheckRow(
-              label: e.label,
-              selected: config.encoding == e,
-              enabled: !locked,
-              onTap: () => notifier.setEncoding(e),
-            ),
-          const SizedBox(height: 8),
-          _DialogSectionLabel('New Line'),
-          for (final n in NewLine.values)
-            _DialogCheckRow(
-              label: n.label,
-              selected: config.newLine == n,
-              enabled: !locked,
-              onTap: () => notifier.setNewLine(n),
+              label: '${shell.label} (${shell.executable})',
+              selected: current == shell,
+              enabled: true,
+              onTap: () => notifier.setShell(shell),
             ),
         ],
       ),
