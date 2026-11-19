@@ -5,6 +5,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_ce/hive.dart';
 import 'package:path/path.dart' as p;
 
+import '../core/app_info_provider.dart';
+
 /// State for the file logging service.
 class FileLoggerState {
   const FileLoggerState({this.isLogging = false, this.timestampEnabled = true});
@@ -67,7 +69,7 @@ class FileLoggerNotifier extends Notifier<FileLoggerState> {
         '_${now.hour.toString().padLeft(2, '0')}'
         '${now.minute.toString().padLeft(2, '0')}'
         '${now.second.toString().padLeft(2, '0')}';
-    final file = File(p.join(dir, 'term_$ts.txt'));
+    final file = File(p.join(dir, '${kProjName}_$ts.txt'));
     _sink = file.openWrite(mode: FileMode.append);
     _buffer = '';
     _needsTimestamp = true;
