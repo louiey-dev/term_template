@@ -208,9 +208,9 @@ class CmWidgetsPanel extends ConsumerWidget {
               _WidgetReferenceBlock(
                 name: 'MyPanelBody',
                 signature:
-                    'MyPanelBody({required title, icon, subtitle, trailing, required child})',
+                    'MyPanelBody({required title, icon, subtitle, trailing, required child, collapsible = true, initiallyExpanded = true, stateKey})',
                 description:
-                    'Titled section card wrapping PanelBody with an icon, title, optional subtitle, trailing widget, and child.',
+                    'Titled section card wrapping PanelBody with an icon, title, optional subtitle, trailing widget, and collapsible child (unfolded by default).',
                 child: MyPanelBody(
                   icon: Icons.view_agenda_outlined,
                   title: 'MyPanelBody',

@@ -300,6 +300,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   minHeight: contentH,
                   maxHeight: contentH,
                   child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       const MenuSidebar(),
                       Expanded(

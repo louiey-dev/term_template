@@ -73,3 +73,7 @@ This template support UART/TERMINAL features via riverpod with custom widgets
     - Configurable Windows PTY Shell
     - Terminal Search & Scrollback Export
   - v0.1.1 -> v0.2.0
+- 2026.11.20
+  - MyPanelBody is foldable
+  - Main panel window aligned to TOP, it was center
+  - v0.2.0 -> v0.2.1
